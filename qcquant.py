@@ -8,26 +8,12 @@ from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 from magicgui import widgets
-import zarr
 import tifffile
 import scipy.ndimage as nd
 
-
-def file_path(string):
-	if os.path.exists(string):
-		return string
-	err = "\n\nError: file %s does not exist\n\n"%(string)
-	raise Exception(err)
-
-def load_tif_zarr(image_path):
-	store = tifffile.imread(image_path, aszarr=True)
-	z = zarr.open(store, mode='r')
-
-	# print(type(z),z.dtype,z.shape,)
-	return z
 	
 def load_tif(image_path):
-	z = np.array(load_tif_zarr(image_path)).astype('int')
+	z = tifffile.imread(image_path).astype('int')
 	print('Loaded %s'%(image_path),z.dtype,z.shape)
 	return z
 
@@ -249,7 +235,7 @@ def initialize_radial():
 	w_filterwidth = widgets.FloatSpinBox(value=10.,label='Filter Width',min=0.,name='filter_width')
 	w_smoothkernel = widgets.FloatSpinBox(value=30.,label='Smooth Kernel',min=0.,name='smooth_kernel')
 	b_locate = widgets.PushButton(text='Locate Center')
-	b_radial = widgets.PushButton(text='Claculate Radial Average')
+	b_radial = widgets.PushButton(text='Calculate Radial Average')
 	container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_smoothkernel, b_radial])
 	
 	b_locate.clicked.connect(lambda e: fxn_locate(viewer,container.asdict()))
