@@ -109,16 +109,19 @@ def fxn_radial(viewer,prefs):
     com = ls[0]._com
     r = ls[0]._r
 
-    x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'])
-    x *= prefs['calibration']/1000
+#     x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'])
+    x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'],prefs['bin_width']/(prefs['calibration']/1000.))
+    x *= prefs['calibration']/1000.
 #     y2 = nd.median_filter(y,int(prefs['smooth_kernel']))
     y2 = nd.gaussian_filter1d(y,prefs['smooth_kernel'])
 
     fig,ax = plt.subplots(1,figsize=(4,3))
     viewer.layers['com']._rad_fig = fig
     viewer.layers['com']._rad_ax = ax
-    viewer.layers['com']._rad_ax.plot(x,y,color='k')
-    viewer.layers['com']._rad_ax.plot(x,y2,color='r')
+    viewer.layers['com']._rad_ax.plot(x,y,color='k',lw=1.2)
+    viewer.layers['com']._rad_ax.plot(x,y2,color='r',alpha=.8,lw=.8)
+    viewer.layers['com']._rad_ax.set_xlim(0,x.max())
+    viewer.layers['com']._rad_ax.set_ylim(0.,viewer.layers['com']._rad_ax.get_ylim()[1])
     viewer.layers['com']._rad_ax.set_xlabel('Radial Distance (mm)')
     viewer.layers['com']._rad_ax.set_ylabel('Absorption')
     viewer.layers['com']._rad_fig.canvas.draw()
@@ -130,7 +133,10 @@ def fxn_radial(viewer,prefs):
     vb = QVBoxLayout()
     b = QPushButton('Save')
     b.clicked.connect(lambda e: save_radial(e,qw,x,y,y2))
+    from PyQt5.QtWidgets import QSizePolicy
+    canvas.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)
     vb.addWidget(canvas)
+#     vb.addStretch()
     vb.addWidget(toolbar)
     vb.addWidget(b)
     qw.setLayout(vb)
@@ -139,13 +145,40 @@ def fxn_radial(viewer,prefs):
     fig.tight_layout()
     canvas.draw()
 
-def radial_profile(data, center, cutoff):
-    @nb.njit(parallel=True)
+def radial_profile(data, center, cutoff,dx):
+    
+    @nb.njit
+    def bin_count(rk,dk,dx):
+        ### rk: 1d array of radii of all pixels within cutoff
+        ### dk: 1d array of data values of all pixels within cutoff
+        ### dx: bin size for quantization
+        
+        nbins = int((np.max(rk)-np.min(rk))//dx+1)
+        if nbins < 1:
+            nbins = 1
+        y = np.zeros(nbins)
+        n = np.zeros(nbins)
+        out = np.zeros((2,nbins))
+        ind = 0
+        for i in range(rk.size):
+            ind = int(rk[i]//dx)
+            y[ind] += dk[i]
+            n[ind] += 1.
+        for i in range(nbins):
+            out[0,i] = i*dx
+            if n[i] > 0:
+                out[1,i] = y[i]/n[i]
+        return out
+
+    @nb.njit
     def quick_count(rs,rk,dk):
+        ### rs: 1d array of all unique radii within cutoff
+        ### rk: 1d array of radii of all pixels within cutoff
+        ### dk: 1d array of data values of all pixels within cutoff
         radial_profile = np.zeros_like(rs)
         rpn = np.zeros_like(rs)
-
-        for i in nb.prange(dk.size):
+        
+        for i in range(dk.size):
             for j in range(rs.size):
                 if rk[i] == rs[j]:
                     radial_profile[j] += dk[i]
@@ -160,13 +193,9 @@ def radial_profile(data, center, cutoff):
     keep = r <= cutoff
     rk = r[keep].astype('float')
     dk = data[keep].astype('float')
-    rs = np.unique(rk)
-
-#     radial_profile = np.zeros_like(rs)
-#     for i in range(rs.size):
-#         radial_profile[i] = np.median(dk[rk==rs[i]])
-
-    radial_profile = quick_count(rs,rk,dk)
+#     rs = np.unique(rk)
+#     radial_profile = quick_count(rs,rk,dk)
+    rs,radial_profile = bin_count(rk,dk,dx)
     return rs, radial_profile
 
 def save_radial(event,widget,rs,profile,smoothed):
@@ -230,10 +259,11 @@ def initialize_radial():
     w_threshold = widgets.FloatSpinBox(value=0.5,label='Threshold',min=0.01,max=.99,name='threshold')
     w_extentfactor = widgets.FloatSpinBox(value=4.,label='Extent Factor',min=0,name='extent_factor')
     w_filterwidth = widgets.FloatSpinBox(value=10.,label='Filter Width',min=0.,name='filter_width')
-    w_smoothkernel = widgets.FloatSpinBox(value=10.,label='Smooth Kernel',min=0.,name='smooth_kernel')
+    w_binwidth = widgets.FloatSpinBox(value=.05,label='Bin Width (mm)',min=0.,name='bin_width')
+    w_smoothkernel = widgets.FloatSpinBox(value=1.,label='Smooth Kernel (bins)',min=0.,name='smooth_kernel')
     b_locate = widgets.PushButton(text='Locate Center')
     b_radial = widgets.PushButton(text='Calculate Radial Average')
-    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_smoothkernel, b_radial])
+    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_binwidth, w_smoothkernel, b_radial])
     
     b_locate.clicked.connect(lambda e: fxn_locate(viewer,container.asdict()))
     b_radial.clicked.connect(lambda e: fxn_radial(viewer,container.asdict()))
