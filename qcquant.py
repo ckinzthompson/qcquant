@@ -1,3 +1,5 @@
+__plugin_name__ = 'qcquant (0.1.1)'
+
 import napari
 from magicgui import widgets
 import tifffile
@@ -7,6 +9,8 @@ import scipy.ndimage as nd
 import matplotlib.pyplot as plt
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog
 from matplotlib.backends.backend_qt5agg import FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
+
 
 def load_tif(image_path):
     z = tifffile.imread(image_path).astype('int')
@@ -96,8 +100,6 @@ def fxn_locate(viewer,prefs):
     print('COM',com)
     print('radius',r,'\n====================')
 
-
-
 def fxn_radial(viewer,prefs):
     ls = [layer for layer in viewer.layers if layer.name == 'com']
     if len(ls) == 0:
@@ -109,10 +111,10 @@ def fxn_radial(viewer,prefs):
 
     x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'])
     x *= prefs['calibration']/1000
-    # y2 = nd.median_filter(y,3)
+#     y2 = nd.median_filter(y,int(prefs['smooth_kernel']))
     y2 = nd.gaussian_filter1d(y,prefs['smooth_kernel'])
 
-    fig,ax = plt.subplots(1)
+    fig,ax = plt.subplots(1,figsize=(4,3))
     viewer.layers['com']._rad_fig = fig
     viewer.layers['com']._rad_ax = ax
     viewer.layers['com']._rad_ax.plot(x,y,color='k')
@@ -123,13 +125,19 @@ def fxn_radial(viewer,prefs):
 
     qw = QWidget()
     canvas = FigureCanvas(viewer.layers['com']._rad_fig)
+    toolbar = NavigationToolbar(canvas)
+
     vb = QVBoxLayout()
     b = QPushButton('Save')
-    b.clicked.connect(lambda e: save_radial(e,qw,x,y))
+    b.clicked.connect(lambda e: save_radial(e,qw,x,y,y2))
     vb.addWidget(canvas)
+    vb.addWidget(toolbar)
     vb.addWidget(b)
     qw.setLayout(vb)
-    viewer.window.add_dock_widget(qw,name='Radial Average - (%.1f,%.1f)'%(com[0],com[1]))
+    viewer.window.add_dock_widget(qw,name='Plot: Radial Average - (%.1f,%.1f)'%(com[0],com[1]))
+#     qw.show()
+    fig.tight_layout()
+    canvas.draw()
 
 def radial_profile(data, center, cutoff):
     @nb.njit(parallel=True)
@@ -147,32 +155,31 @@ def radial_profile(data, center, cutoff):
         return radial_profile
 
     x,y = np.indices((data.shape))
-    r = np.sqrt((x.astype('float') - center[0])**2 + (y.astype('float') - center[1])**2)
+    ## This rounds up/down to the nearest pixels, then flattens so that pixel access is symmetric and you actually do some averaging
+    r = np.sqrt((x.astype('float') - float((0.5+center[0])//1))**2 + (y.astype('float') - float((0.5+center[1])//1))**2)
     keep = r <= cutoff
     rk = r[keep].astype('float')
     dk = data[keep].astype('float')
     rs = np.unique(rk)
 
-    # radial_profile = np.zeros_like(rs)
-    # for i in range(rs.size):
-    #     radial_profile[i] = np.median(dk[rk==rs[i]])
-    
+#     radial_profile = np.zeros_like(rs)
+#     for i in range(rs.size):
+#         radial_profile[i] = np.median(dk[rk==rs[i]])
+
     radial_profile = quick_count(rs,rk,dk)
     return rs, radial_profile
 
-def save_radial(event,widget,rs,profile):
+def save_radial(event,widget,rs,profile,smoothed):
     fname = QFileDialog.getSaveFileName(parent=widget, caption="Save Radial Profile", filter="ASCII (*.txt)")[0]
     if not fname == "":
-        np.savetxt(fname,np.array((rs,profile)))
+        np.savetxt(fname,np.array((rs,profile,smoothed)))
         print('Saved:',fname)
-
 
 def add_flat(viewer,flat):
     if 'flat' in viewer.layers:
         viewer.layers.remove('flat')
     viewer.add_image(flat,name='flat')
     contrast(viewer,'flat')
-
 
 def fxn_load_flat(viewer,prefs):
     flat = load_tif(prefs['flat'])
@@ -202,15 +209,13 @@ def fxn_calc_conversion(viewer,prefs):
     ind = inds[-1]
     ellipse = ss.data[ind]
     
-    
     r1 = (ellipse[3,0]-ellipse[0,0])/2.
     r2 = (ellipse[1,1]-ellipse[0,1])/2.
     r = .5*(r1+r2)
     
     factor = prefs['dishdiameter']/(2.*r)*1000  ## um/pix
     print(factor)
-    viewer.window._dock_widgets['qcquant'].container.calibration.value = factor
-
+    viewer.window._dock_widgets[__plugin_name__].container.calibration.value = factor
 
 def initialize_radial():
     viewer = napari.Viewer()
@@ -225,7 +230,7 @@ def initialize_radial():
     w_threshold = widgets.FloatSpinBox(value=0.5,label='Threshold',min=0.01,max=.99,name='threshold')
     w_extentfactor = widgets.FloatSpinBox(value=4.,label='Extent Factor',min=0,name='extent_factor')
     w_filterwidth = widgets.FloatSpinBox(value=10.,label='Filter Width',min=0.,name='filter_width')
-    w_smoothkernel = widgets.FloatSpinBox(value=30.,label='Smooth Kernel',min=0.,name='smooth_kernel')
+    w_smoothkernel = widgets.FloatSpinBox(value=10.,label='Smooth Kernel',min=0.,name='smooth_kernel')
     b_locate = widgets.PushButton(text='Locate Center')
     b_radial = widgets.PushButton(text='Calculate Radial Average')
     container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_smoothkernel, b_radial])
@@ -236,7 +241,7 @@ def initialize_radial():
     b_load_data.clicked.connect(lambda e: fxn_load_data(viewer,container.asdict()))
     b_calc_conversion.clicked.connect(lambda e: fxn_calc_conversion(viewer,container.asdict()))
 
-    dock = viewer.window.add_dock_widget(container,name='qcquant: Radial Averaging Plugin')
+    dock = viewer.window.add_dock_widget(container,name=__plugin_name__)
     dock.container = container
     
     napari.run()
