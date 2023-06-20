@@ -19,7 +19,9 @@ python -m pip install numba matplotlib
 7. Calculate radial average
 8. Save (raw) radial average
 
+### Tutorial 1: Radial Average
+https://github.com/ckinzthompson/qcquant/assets/17210418/02ba235a-152d-4747-a1e6-29758d60c031
 
-## Tutorial
-https://github.com/ckinzthompson/qcquant/assets/17210418/77c7c6e9-a633-45f0-9cb1-8a37c469afaf
+### Tutorial 2: Calibration
+https://github.com/ckinzthompson/qcquant/assets/17210418/d76e4741-a87e-4ba4-9d54-4b667e5decae
 
