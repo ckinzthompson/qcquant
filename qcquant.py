@@ -11,7 +11,6 @@ from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
-
 def load_tif(image_path):
     z = tifffile.imread(image_path).astype('int')
     print('Loaded %s'%(image_path),z.dtype,z.shape)
@@ -212,10 +211,14 @@ def add_flat(viewer,flat):
 
 def fxn_load_flat(viewer,prefs):
     flat = load_tif(prefs['flat'])
+    if prefs['invertdata']:
+        flat = 4096-flat
     add_flat(viewer,flat)
 
 def fxn_load_data(viewer,prefs):
     data = load_tif(prefs['absorbance'])
+    if prefs['invertdata']:
+        data = 4096-data
     if not 'flat' in viewer.layers:
         flat = np.zeros_like(data) + data.max()
         add_flat(viewer,flat)
@@ -253,6 +256,7 @@ def initialize_radial():
     b_load_flat = widgets.PushButton(text='Load Flat')
     w_data = widgets.FileEdit(mode='r',label='Data File',name='absorbance')
     b_load_data = widgets.PushButton(text='Load Data')
+    w_invert = widgets.CheckBox(text='Invert (12-bit) Data',value=False,name='invertdata')
     w_dish_diameter = widgets.FloatSpinBox(value=36.,label='Dish O.D. (mm)',min=0,name='dishdiameter')
     b_calc_conversion = widgets.PushButton(text='Calculate conversion (circle)')
     w_calibration = widgets.FloatSpinBox(value=47.4,label='Calibration (um/px)',min=0,name='calibration')
@@ -263,7 +267,7 @@ def initialize_radial():
     w_smoothkernel = widgets.FloatSpinBox(value=1.,label='Smooth Kernel (bins)',min=0.,name='smooth_kernel')
     b_locate = widgets.PushButton(text='Locate Center')
     b_radial = widgets.PushButton(text='Calculate Radial Average')
-    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_binwidth, w_smoothkernel, b_radial])
+    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_invert,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_binwidth, w_smoothkernel, b_radial])
     
     b_locate.clicked.connect(lambda e: fxn_locate(viewer,container.asdict()))
     b_radial.clicked.connect(lambda e: fxn_radial(viewer,container.asdict()))
