@@ -1,4 +1,4 @@
-__plugin_name__ = 'qcquant (0.1.1)'
+__plugin_name__ = 'qcquant (0.2.0)'
 
 import napari
 from magicgui import widgets
@@ -169,48 +169,99 @@ def fxn_radial(viewer,prefs):
 #     qw.show()
     fig.tight_layout()
     canvas.draw()
-
-def radial_profile(data, center, cutoff,dx):
     
-    @nb.njit
-    def bin_count(rk,dk,dx):
-        ### rk: 1d array of radii of all pixels within cutoff
-        ### dk: 1d array of data values of all pixels within cutoff
-        ### dx: bin size for quantization
-        
-        nbins = int((np.max(rk)-np.min(rk))//dx+1)
-        if nbins < 1:
-            nbins = 1
-        y = np.zeros(nbins)
-        n = np.zeros(nbins)
-        out = np.zeros((2,nbins))
-        ind = 0
-        for i in range(rk.size):
-            ind = int(rk[i]//dx)
-            y[ind] += dk[i]
-            n[ind] += 1.
-        for i in range(nbins):
-            out[0,i] = i*dx
-            if n[i] > 0:
-                out[1,i] = y[i]/n[i]
-        return out
+    
 
-    @nb.njit
-    def quick_count(rs,rk,dk):
-        ### rs: 1d array of all unique radii within cutoff
-        ### rk: 1d array of radii of all pixels within cutoff
-        ### dk: 1d array of data values of all pixels within cutoff
-        radial_profile = np.zeros_like(rs)
-        rpn = np.zeros_like(rs)
-        
-        for i in range(dk.size):
-            for j in range(rs.size):
-                if rk[i] == rs[j]:
-                    radial_profile[j] += dk[i]
-                    rpn[j] += 1
-                    break
-        radial_profile = radial_profile/rpn
-        return radial_profile
+def radial_adjust(viewer,prefs):
+    ls = [layer for layer in viewer.layers if layer.name == 'com']
+    if len(ls) == 0:
+        print('need to get a com layer')
+        return
+    com = viewer.layers['com'].data[-1].copy()
+    
+    
+    from scipy.optimize import minimize
+    def minfxn(theta,viewer,prefs,com):
+        i,j = theta
+        ll = 64
+        if i < -ll or i > ll or j < -ll or j > ll:
+            return np.inf
+        x,y = radial_profile(viewer.layers['absorbance'].data, com+theta, prefs['fit_extent']/(prefs['calibration']/1000.), prefs['bin_width']/(prefs['calibration']/1000.), method='norm_var')
+        out = y.max()
+        return out
+    
+    out = minimize(minfxn,np.array((0.,0.)),args=(viewer,prefs,com),method='Nelder-Mead',options={'initial_simplex':np.array(((1.,1.),(0.,1),(1.,0)))})
+    print(out)
+    viewer.layers['com'].data[-1] += out.x
+    viewer.layers['com'].refresh()
+
+
+
+
+@nb.njit
+def bin_count_mean(rk,dk,dx):
+    ### rk: 1d array of radii of all pixels within cutoff
+    ### dk: 1d array of data values of all pixels within cutoff
+    ### dx: bin size for quantization
+    
+    nbins = int((np.max(rk)-np.min(rk))//dx+1)
+    if nbins < 1:
+        nbins = 1
+    y = np.zeros(nbins)
+    n = np.zeros(nbins)
+    out = np.zeros((2,nbins))
+    ind = 0
+    for i in range(rk.size):
+        ind = int(rk[i]//dx)
+        y[ind] += dk[i]
+        n[ind] += 1.
+    for i in range(nbins):
+        out[0,i] = i*dx
+        if n[i] > 0:
+            out[1,i] = y[i]/n[i]
+    return out
+    
+@nb.njit
+def bin_count_var(rk,dk,dx):
+    ### rk: 1d array of radii of all pixels within cutoff
+    ### dk: 1d array of data values of all pixels within cutoff
+    ### dx: bin size for quantization
+    
+    nbins = int((np.max(rk)-np.min(rk))//dx+1)
+    if nbins < 1:
+        nbins = 1
+    y = np.zeros(nbins)
+    n = np.zeros(nbins)
+    Ex = bin_count_mean(rk,dk,dx)[1]
+    out = np.zeros((2,nbins))
+    ind = 0
+    for i in range(rk.size):
+        ind = int(rk[i]//dx)
+        y[ind] += (dk[i]-Ex[ind])**2.
+        n[ind] += 1.
+    for i in range(nbins):
+        out[0,i] = i*dx
+        if n[i] > 0:
+            out[1,i] = y[i]/n[i]
+    return out
+
+def radial_profile(data, center, cutoff,dx,method='mean'):
+    # @nb.njit
+    # def quick_count(rs,rk,dk):
+    #     ### rs: 1d array of all unique radii within cutoff
+    #     ### rk: 1d array of radii of all pixels within cutoff
+    #     ### dk: 1d array of data values of all pixels within cutoff
+    #     radial_profile = np.zeros_like(rs)
+    #     rpn = np.zeros_like(rs)
+    #
+    #     for i in range(dk.size):
+    #         for j in range(rs.size):
+    #             if rk[i] == rs[j]:
+    #                 radial_profile[j] += dk[i]
+    #                 rpn[j] += 1
+    #                 break
+    #     radial_profile = radial_profile/rpn
+    #     return radial_profile
 
     x,y = np.indices((data.shape))
     ## This rounds up/down to the nearest pixels, then flattens so that pixel access is symmetric and you actually do some averaging
@@ -220,7 +271,12 @@ def radial_profile(data, center, cutoff,dx):
     dk = data[keep].astype('float')
 #     rs = np.unique(rk)
 #     radial_profile = quick_count(rs,rk,dk)
-    rs,radial_profile = bin_count(rk,dk,dx)
+    if method == 'mean':
+        rs,radial_profile = bin_count_mean(rk,dk,dx)
+    elif method in ['var','norm_var']:
+        rs,radial_profile = bin_count_var(rk,dk,dx)
+        if method == 'norm_var':
+            radial_profile = np.sqrt(radial_profile)/bin_count_mean(rk,dk,dx)[1]
     return rs, radial_profile
 
 def save_radial(event,widget,rs,profile,smoothed):
@@ -241,8 +297,49 @@ def fxn_load_flat(viewer,prefs):
         # flat = 4096-flat
     add_flat(viewer,flat)
     
+    
+# # def check_symmetry(viewer,prefs):
+# ll = 1
+# pp = 64
+# for i in range(-ll,ll+1,1):
+#     for j in range(-ll,ll+1,1):
+#         q = viewer.layers['com'].data[0].astype('int') + np.array([i,j],dtype='int')
+#         d = viewer.layers['absorbance'].data
+#         dd = d[q[0]-pp:q[0]+pp,q[1]-pp:q[1]+pp]
+#         # dd = np.concatenate([dd,dd],axis=0)
+#         # dd = np.concatenate([dd,dd],axis=1)
+#         ff = np.abs((np.fft.fft2(dd)))
+#         viewer.add_image(np.log(ff))
+#
+# d = viewer.layers['absorbance'].data
+# com = viewer.layers['com'].data[0].astype('int')
+# ringx = np.array([-2,-2,-1,0,1,2,2,2,1,0,-1,-2])*100
+# ringy = np.array([0,-1,-2,-2,-2,-1,0,1,2,2,2,1])*100
+# record = []
+# ll = 10
+# for i in range(-ll,ll+1):
+#     for j in range(-ll,ll+1):
+#         q = com + np.array([i,j],dtype='int')
+#         ii = q[0] + ringx
+#         jj = q[1] + ringy
+#         # print(d[ii,jj].shape)
+#         record.append([i,j,np.sum((d[ii,jj]-d[q[0],q[1]])**2.)])
+# mm = np.array([ri[2] for ri in record])
+# print(record[np.argmax(mm)])
+# viewer.layers['com'].data[0,0] -= record[np.argmax(mm)][0]
+# viewer.layers['com'].data[0,1] -= record[np.argmax(mm)][1]
 
-def newcom(viewer,data):
+# ll = 1
+# pp = 20
+# for i in range(-ll,ll+1,1):
+#     for j in range(-ll,ll+1,1):
+#         dx = np.sum((d[q[0]+i-pp:q[0]+i+1,q[1]+j-pp:q[1]+j+pp+1]-d[q[0]+i:q[0]+i+pp+1,q[1]+j-pp:q[1]+j-pp+1])**2.)
+#         dy = np.sum((d[q[0]+i-pp:q[0]+i+pp+1,q[1]+j-pp:q[1]+j+1]-d[q[0]+i-pp:q[0]+i+pp+1,q[1]+j-pp:q[1]+j-pp+1])**2.)
+#         print(i,j,)
+#
+#
+
+def new_com(viewer,data):
     ls = [layer for layer in viewer.layers if layer.name == 'com']
     if len(ls) == 0:
         com = np.array([data.shape[0]/2.,data.shape[1]/2.])
@@ -260,7 +357,7 @@ def fxn_load_data_trans(viewer,prefs):
         viewer.layers.remove('absorbance')
     viewer.add_image(absorbance,name='absorbance')
     contrast(viewer,'absorbance')
-    newcom(viewer,data)
+    new_com(viewer,data)
 
 def fxn_load_data_epi(viewer,prefs):
     data = load_tif(prefs['absorbance'])
@@ -271,7 +368,7 @@ def fxn_load_data_epi(viewer,prefs):
         viewer.layers.remove('absorbance')
     viewer.add_image(absorbance,name='absorbance')
     contrast(viewer,'absorbance')
-    newcom(viewer,data)
+    new_com(viewer,data)
 
 def fxn_calc_conversion(viewer,prefs):
     shapes = [layer for layer in viewer.layers if isinstance(layer, napari.layers.shapes.Shapes)]
@@ -306,14 +403,15 @@ def initialize_radial():
     w_dish_diameter = widgets.FloatSpinBox(value=36.,label='Dish O.D. (mm)',min=0,name='dishdiameter')
     b_calc_conversion = widgets.PushButton(text='Calculate conversion (circle)')
     w_calibration = widgets.FloatSpinBox(value=47.4,label='Calibration (um/px)',min=0,name='calibration')
-    w_threshold = widgets.FloatSpinBox(value=0.5,label='Threshold',min=0.01,max=.99,name='threshold')
-    w_extentfactor = widgets.FloatSpinBox(value=20.,label='Extent (mm)',min=0,name='extent_factor')
+    w_extentfactor = widgets.FloatSpinBox(value=25.,label='Extent (mm)',min=0,name='extent_factor')
+    w_fitextent = widgets.FloatSpinBox(value=4.,label='Fit Extent (mm)',min=0,name='fit_extent')
     w_filterwidth = widgets.FloatSpinBox(value=10.,label='Filter Width',min=0.,name='filter_width')
-    w_binwidth = widgets.FloatSpinBox(value=.05,label='Bin Width (mm)',min=0.,name='bin_width')
-    w_smoothkernel = widgets.FloatSpinBox(value=1.,label='Smooth Kernel (bins)',min=0.,name='smooth_kernel')
+    w_binwidth = widgets.FloatSpinBox(value=.025,label='Bin Width (mm)',min=0.,name='bin_width',step=.001)
+    w_smoothkernel = widgets.FloatSpinBox(value=2.,label='Smooth Kernel (bins)',min=0.,name='smooth_kernel')
     b_locate = widgets.PushButton(text='Locate Center')
     b_radial = widgets.PushButton(text='Calculate Radial Average')
-    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data_trans,b_load_data_epi,w_dish_diameter,b_calc_conversion,w_calibration, w_extentfactor,  w_binwidth, w_smoothkernel, b_radial])
+    b_fit = widgets.PushButton(text='Find Radial Center')
+    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data_trans,b_load_data_epi,w_dish_diameter,b_calc_conversion,w_calibration, w_extentfactor, w_fitextent, w_binwidth, w_smoothkernel, b_fit, b_radial])
     
     b_locate.clicked.connect(lambda e: fxn_locate(viewer,container.asdict()))
     b_radial.clicked.connect(lambda e: fxn_radial(viewer,container.asdict()))
@@ -321,6 +419,7 @@ def initialize_radial():
     b_load_data_trans.clicked.connect(lambda e: fxn_load_data_trans(viewer,container.asdict()))
     b_load_data_epi.clicked.connect(lambda e: fxn_load_data_epi(viewer,container.asdict()))
     b_calc_conversion.clicked.connect(lambda e: fxn_calc_conversion(viewer,container.asdict()))
+    b_fit.clicked.connect(lambda e: radial_adjust(viewer,container.asdict()))
 
     dock = viewer.window.add_dock_widget(container,name=__plugin_name__)
     dock.container = container
