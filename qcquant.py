@@ -14,11 +14,31 @@ from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as Navigatio
 def load_tif(image_path):
     z = tifffile.imread(image_path).astype('int')
     print('Loaded %s'%(image_path),z.dtype,z.shape)
+    smax = 0
+    with tifffile.TiffFile(image_path) as tif:
+        # for key in tif.pages[0].tags.keys():
+            # print(key,tif.pages[0].tags[key])
+        # print(tif.pages[0].tags['PhotometricInterpretation'].value)
+        smax = int(tif.pages[0].tags['SMaxSampleValue'].value)
+        print(str(tif.pages[0].tags['PhotometricInterpretation'].value))
+        print('%d-bit image'%(int(np.log2(smax+1))))
+        if str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISBLACK':
+            pass
+        elif str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISWHITE':
+            z = smax - z
+            print('Inverted image')
+        else:
+            raise Exception('Cannot interpret photometric approach')
     return z
 
-def calculate_absorbance(z,z0):
-    transmittance = z.astype('float')/z0.astype('float')
-    absorbance = -np.log10(transmittance)
+def calculate_absorbance(z,z0,mode='trans'):
+    if mode == 'trans':
+        transmittance = z.astype('float')/z0.astype('float')
+        absorbance = -np.log10(transmittance)
+    elif mode == 'epi':
+        absorbance = z.astype('float') / 4096.
+    else:
+        raise Exception('%s mode is not implemented yet'%(mode))
     
     ## tif files are 16bit images so limit absorbance accordingly
     limit = np.log10(2**16)
@@ -74,7 +94,8 @@ def fxn_locate(viewer,prefs):
 
     r = np.sqrt(area/np.pi)
     ellipse = np.array([[com[0],com[1]],[r,r]])
-    ellipse2 = np.array([[com[0],com[1]],[r*prefs['extent_factor'],r*prefs['extent_factor']]])
+    rr = prefs['extent_factor']/(prefs['calibration']/1000.)
+    ellipse2 = np.array([[com[0],com[1]],[rr,rr]])
     # r2 = 1.2*r
     # box = np.array([[com[0]-r2,com[1]-r2],[com[0]-r2,com[1]+r2],[com[0]+r2,com[1]+r2],[com[0]+r2,com[1]-r2],])
 
@@ -93,6 +114,10 @@ def fxn_locate(viewer,prefs):
     viewer.add_points(com,name='com',face_color='red',edge_color='darkred')
     viewer.layers['com']._com = com
     viewer.layers['com']._r = r
+    
+    
+    viewer.layers['zones'].visible = False
+    viewer.layers['labeled_mask'].visible = False
 
     print('Locating\n====================')
     print('Threshold',thresholdval)
@@ -105,11 +130,12 @@ def fxn_radial(viewer,prefs):
         print('need to get a com layer')
         return
 
-    com = ls[0]._com
-    r = ls[0]._r
+    # com = ls[0]._com
+    # r = ls[0]._r
+    com = viewer.layers['com'].data[-1]
 
 #     x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'])
-    x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'],prefs['bin_width']/(prefs['calibration']/1000.))
+    x,y = radial_profile(viewer.layers['absorbance'].data, com,prefs['extent_factor']/(prefs['calibration']/1000.),prefs['bin_width']/(prefs['calibration']/1000.))
     x *= prefs['calibration']/1000.
 #     y2 = nd.median_filter(y,int(prefs['smooth_kernel']))
     y2 = nd.gaussian_filter1d(y,prefs['smooth_kernel'])
@@ -211,22 +237,41 @@ def add_flat(viewer,flat):
 
 def fxn_load_flat(viewer,prefs):
     flat = load_tif(prefs['flat'])
-    if prefs['invertdata']:
-        flat = 4096-flat
+    # if prefs['invertdata']:
+        # flat = 4096-flat
     add_flat(viewer,flat)
+    
 
-def fxn_load_data(viewer,prefs):
+def newcom(viewer,data):
+    ls = [layer for layer in viewer.layers if layer.name == 'com']
+    if len(ls) == 0:
+        com = np.array([data.shape[0]/2.,data.shape[1]/2.])
+        viewer.add_points(com,name='com',face_color='red',edge_color='darkred')
+
+def fxn_load_data_trans(viewer,prefs):
     data = load_tif(prefs['absorbance'])
-    if prefs['invertdata']:
-        data = 4096-data
+    # if prefs['invertdata']:
+        # data = 4096-data
     if not 'flat' in viewer.layers:
         flat = np.zeros_like(data) + data.max()
         add_flat(viewer,flat)
-    absorbance = calculate_absorbance(data,viewer.layers['flat'].data)
+    absorbance = calculate_absorbance(data,viewer.layers['flat'].data,mode='trans')
     if 'absorbance' in viewer.layers:
         viewer.layers.remove('absorbance')
     viewer.add_image(absorbance,name='absorbance')
     contrast(viewer,'absorbance')
+    newcom(viewer,data)
+
+def fxn_load_data_epi(viewer,prefs):
+    data = load_tif(prefs['absorbance'])
+    # if prefs['invertdata']:
+        # data = 4096-data
+    absorbance = calculate_absorbance(data,None,mode='epi')
+    if 'absorbance' in viewer.layers:
+        viewer.layers.remove('absorbance')
+    viewer.add_image(absorbance,name='absorbance')
+    contrast(viewer,'absorbance')
+    newcom(viewer,data)
 
 def fxn_calc_conversion(viewer,prefs):
     shapes = [layer for layer in viewer.layers if isinstance(layer, napari.layers.shapes.Shapes)]
@@ -255,24 +300,26 @@ def initialize_radial():
     w_flat = widgets.FileEdit(mode='r',label='Flat-field File',name='flat')
     b_load_flat = widgets.PushButton(text='Load Flat')
     w_data = widgets.FileEdit(mode='r',label='Data File',name='absorbance')
-    b_load_data = widgets.PushButton(text='Load Data')
-    w_invert = widgets.CheckBox(text='Invert (12-bit) Data',value=False,name='invertdata')
+    b_load_data_trans = widgets.PushButton(text='Load Data (Trans-illumination)')
+    b_load_data_epi = widgets.PushButton(text='Load Data (Epi-illumination)')
+    # w_invert = widgets.CheckBox(text='Invert (12-bit) Data',value=False,name='invertdata')
     w_dish_diameter = widgets.FloatSpinBox(value=36.,label='Dish O.D. (mm)',min=0,name='dishdiameter')
     b_calc_conversion = widgets.PushButton(text='Calculate conversion (circle)')
     w_calibration = widgets.FloatSpinBox(value=47.4,label='Calibration (um/px)',min=0,name='calibration')
     w_threshold = widgets.FloatSpinBox(value=0.5,label='Threshold',min=0.01,max=.99,name='threshold')
-    w_extentfactor = widgets.FloatSpinBox(value=4.,label='Extent Factor',min=0,name='extent_factor')
+    w_extentfactor = widgets.FloatSpinBox(value=20.,label='Extent (mm)',min=0,name='extent_factor')
     w_filterwidth = widgets.FloatSpinBox(value=10.,label='Filter Width',min=0.,name='filter_width')
     w_binwidth = widgets.FloatSpinBox(value=.05,label='Bin Width (mm)',min=0.,name='bin_width')
     w_smoothkernel = widgets.FloatSpinBox(value=1.,label='Smooth Kernel (bins)',min=0.,name='smooth_kernel')
     b_locate = widgets.PushButton(text='Locate Center')
     b_radial = widgets.PushButton(text='Calculate Radial Average')
-    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data,w_invert,w_dish_diameter,b_calc_conversion,w_calibration, w_threshold, w_extentfactor, w_filterwidth, b_locate, w_binwidth, w_smoothkernel, b_radial])
+    container = widgets.Container(widgets=[w_flat,b_load_flat,w_data,b_load_data_trans,b_load_data_epi,w_dish_diameter,b_calc_conversion,w_calibration, w_extentfactor,  w_binwidth, w_smoothkernel, b_radial])
     
     b_locate.clicked.connect(lambda e: fxn_locate(viewer,container.asdict()))
     b_radial.clicked.connect(lambda e: fxn_radial(viewer,container.asdict()))
     b_load_flat.clicked.connect(lambda e: fxn_load_flat(viewer,container.asdict()))
-    b_load_data.clicked.connect(lambda e: fxn_load_data(viewer,container.asdict()))
+    b_load_data_trans.clicked.connect(lambda e: fxn_load_data_trans(viewer,container.asdict()))
+    b_load_data_epi.clicked.connect(lambda e: fxn_load_data_epi(viewer,container.asdict()))
     b_calc_conversion.clicked.connect(lambda e: fxn_calc_conversion(viewer,container.asdict()))
 
     dock = viewer.window.add_dock_widget(container,name=__plugin_name__)
