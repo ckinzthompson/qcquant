@@ -321,7 +321,7 @@ def fxn_load_data_epi():
     new_com(data)
 
 def fxn_calc_conversion():
-    global viewer
+    global viewer,dock_qcquant
     prefs = get_prefs()
     shapes = [layer for layer in viewer.layers if isinstance(layer, napari.layers.shapes.Shapes)]
     if len(shapes)== 0:
@@ -340,6 +340,7 @@ def fxn_calc_conversion():
     r = .5*(r1+r2)
     
     factor = prefs['dishdiameter']/(2.*r)*1000  ## um/pix
+    dock_qcquant.container['calibration'].value = factor
     # print(factor)
     # viewer.window._dock_widgets[__plugin_name__].container.calibration.value = factor
 
