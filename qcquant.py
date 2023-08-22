@@ -284,6 +284,7 @@ def fxn_radial():
 
 def fxn_load_flat():
     global viewer
+    prefs = get_prefs()
     flat = load_tif(prefs['flat'])
     # if prefs['invertdata']:
         # flat = 4096-flat
