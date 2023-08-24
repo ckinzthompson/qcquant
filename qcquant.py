@@ -5,6 +5,7 @@ __plugin_name__ = 'qcquant (0.3.0)'
 viewer = None         ## Napari viewer
 dock_qcquant = None   ## QCQuant config dock
 dock_radial = None    ## Radial plot dock
+dock_profile = None   ## Profile plot dock
 ############################################
 
 import napari
@@ -15,7 +16,7 @@ import numba as nb
 import scipy.ndimage as nd
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
-from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog,QSizePolicy,QDockWidget
+from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog,QSizePolicy,QDockWidget,QHBoxLayout,QLabel,QLineEdit
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
@@ -402,6 +403,8 @@ def initialize_qcquant_dock():
     return dock
 
 def initialize_radial_dock():
+    global viewer
+    
     fig,ax = plt.subplots(1,figsize=(4,3))
     canvas = FigureCanvas(fig)
     toolbar = NavigationToolbar(canvas)
@@ -433,11 +436,111 @@ def initialize_radial_dock():
     qdw.y2 = None
     return qdw
     
+    
+def fxn_prof_save():
+    global viewer,dock_profile
+    print('save')
 
+    fname = QFileDialog.getSaveFileName(parent=dock_radial, caption="Save Figure",filter='*.pdf')[0]
+    if not fname == "":
+        dock_profile.fig.savefig(fname)
+
+def fxn_prof_clear():
+    global viewer,dock_profile
+    dock_profile.ax.cla()
+    dock_profile.ax.set_xlabel('Radial Distance (mm)')
+    dock_profile.ax.set_ylabel('Absorption')
+    dock_profile.fig.subplots_adjust(left=.2,bottom=.2)
+    dock_profile.canvas.draw()
+    
+
+def fxn_prof_add():
+    global viewer,dock_profile
+    fname = dock_profile.profile_filename.text()
+    if fname == "":
+        return
+    try:
+        d = np.loadtxt(fname)
+        if not d.ndim == 2 or not d.shape[0] == 3:
+            print('Data is wrong',d.shape)
+            return
+        dock_profile.ax.plot(d[0],d[1],color='k',lw=1.)
+        dock_profile.ax.set_xlim(d[0].min(),d[0].max())
+        dock_profile.ax.set_ylim(0.,dock_profile.ax.get_ylim()[1])
+        dock_profile.ax.set_xlabel('Radial Distance (mm)')
+        dock_profile.ax.set_ylabel('Absorption')
+        dock_profile.fig.subplots_adjust(left=.2,bottom=.2)
+        dock_profile.canvas.draw()
+    except:
+        print('Could not load %s'%(fname))
+    
+def fxn_prof_select():
+    global viewer,dock_profile
+    fname = QFileDialog.getOpenFileName(parent=dock_profile, caption="Load Profile file")[0]
+    if not fname == "":
+        dock_profile.profile_filename.setText(fname)
+        
+        
+        
+def initialize_profile_dock():
+    global viewer
+
+    fig,ax = plt.subplots(1,figsize=(4,3))
+    canvas = FigureCanvas(fig)
+    toolbar = NavigationToolbar(canvas)
+    # canvas.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)
+    canvas.setSizePolicy(QSizePolicy.Fixed,QSizePolicy.Fixed)
+    b = QPushButton('Save Figure')
+    b.clicked.connect(lambda e: fxn_prof_save())
+    b2 = QPushButton('Clear Plot')
+    b2.clicked.connect(lambda e: fxn_prof_clear())
+    b_add = QPushButton('Add')
+    b_add.clicked.connect(lambda e: fxn_prof_add())
+
+
+    profile_filename = QLineEdit()
+    profile_filename.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
+    b_selectprofile = QPushButton('Select File')
+    b_selectprofile.clicked.connect(lambda e: fxn_prof_select())
+    qwf = QWidget()
+    hbox = QHBoxLayout()
+    hbox.addWidget(QLabel("Profile File"))
+    hbox.addWidget(profile_filename)
+    hbox.addWidget(b_selectprofile)
+    hbox.addWidget(b_add)
+    qwf.setLayout(hbox)
+
+    qw = QWidget()
+    vb = QVBoxLayout()
+    vb.addWidget(canvas)
+    vb.addWidget(toolbar)
+    vb.addWidget(qwf)
+    vb.addWidget(b2)
+    vb.addWidget(b)
+    vb.addStretch()
+    qw.setLayout(vb)
+
+    qdw = viewer.window.add_dock_widget(qw,name='Profile Plot')
+    qdw.setFeatures(QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable)
+    qdw.fig = fig
+    qdw.ax = ax
+    qdw.canvas = canvas
+    qdw.toolbar = toolbar
+
+    qdw.x = None
+    qdw.y = None
+    qdw.y2 = None
+    
+    qdw.profile_filename = profile_filename
+    return qdw
+    
+    
 if __name__ == '__main__':
     viewer = napari.Viewer()
     dock_qcquant = initialize_qcquant_dock()
     dock_radial = initialize_radial_dock()
+    dock_profile = initialize_profile_dock()
     viewer.window._qt_window.tabifyDockWidget(dock_qcquant,dock_radial)
+    viewer.window._qt_window.tabifyDockWidget(dock_radial,dock_profile)
     dock_qcquant.raise_()
     napari.run()
