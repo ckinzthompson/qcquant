@@ -17,6 +17,7 @@ import scipy.ndimage as nd
 from scipy.optimize import minimize
 import matplotlib.pyplot as plt
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog,QSizePolicy,QDockWidget,QHBoxLayout,QLabel,QLineEdit
+from PyQt5.QtCore import QTimer
 from matplotlib.backends.backend_qt5agg import FigureCanvas
 from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavigationToolbar
 
@@ -114,12 +115,12 @@ def radial_profile(data, center, cutoff,dx,method='mean'):
 #     rs = np.unique(rk)
 #     radial_profile = quick_count(rs,rk,dk)
     if method == 'mean':
-        rs,radial_profile = bin_count_mean(rk,dk,dx)
+        rs,radial_profile_ = bin_count_mean(rk,dk,dx)
     elif method in ['var','norm_var']:
-        rs,radial_profile = bin_count_var(rk,dk,dx)
+        rs,radial_profile_ = bin_count_var(rk,dk,dx)
         if method == 'norm_var':
-            radial_profile = np.sqrt(radial_profile)/bin_count_mean(rk,dk,dx)[1]
-    return rs, radial_profile
+            radial_profile_ = np.sqrt(radial_profile)/bin_count_mean(rk,dk,dx)[1]
+    return rs, radial_profile_
 
 
 def get_prefs():
@@ -347,6 +348,33 @@ def fxn_calc_conversion():
     # viewer.window._dock_widgets[__plugin_name__].container.calibration.value = factor
 
 
+def update_dcom():
+    global viewer,dock_qcquant
+    
+    if 'com' in viewer.layers:
+        prefs = get_prefs()
+        com = np.array(viewer.layers['com'].data[-1])
+        cursor = np.array(viewer.cursor.position)
+        distance = np.linalg.norm(cursor-com)
+        distance *= prefs['calibration']/1000.
+        dock_qcquant.container['showdistance'].text = 'Distance from COM: %.1f mm'%(distance)
+    else:
+        dock_qcquant.container['showdistance'].text = 'Distance from COM: '
+
+def fxn_showdistance():
+    global viewer,dock_qcquant
+    prefs = get_prefs()
+    state = prefs['showdistance']
+    
+    if state:
+        dock_qcquant._timer_distance.timeout.connect(lambda : update_dcom())
+        dock_qcquant._timer_distance.start()
+    else:
+        dock_qcquant._timer_distance.stop()
+        dock_qcquant._timer_distance.disconnect()
+        dock_qcquant.container['showdistance'].text = 'Distance from COM: '
+
+
 def initialize_qcquant_dock():
     global viewer
 
@@ -367,6 +395,7 @@ def initialize_qcquant_dock():
     w_smoothkernel = widgets.FloatSpinBox(value=2.,label='Smoothing Kernel (bins)',min=0.,name='smooth_kernel')
     w_locatemode = widgets.ComboBox(value='Mean',label='Locate Mode',choices=['Max','Mean'],name='locate_mode')
     w_centerimg = widgets.CheckBox(text='Plate Image: Locate Plate?',value=True,name='centerimg')
+    w_showdistance = widgets.CheckBox(text='Distance from COM:',value=False,name='showdistance')
     b_locate = widgets.PushButton(text='Locate Center')
     b_radial = widgets.PushButton(text='Calculate Radial Average')
     b_fit = widgets.PushButton(text='Find Radial Center')
@@ -388,6 +417,7 @@ def initialize_qcquant_dock():
         w_smoothkernel,
         b_radial,
         w_centerimg,
+        w_showdistance,
     ])
     
     b_locate.clicked.connect(lambda e: fxn_locate())
@@ -397,9 +427,13 @@ def initialize_qcquant_dock():
     b_load_data_epi.clicked.connect(lambda e: fxn_load_data_epi())
     b_calc_conversion.clicked.connect(lambda e: fxn_calc_conversion())
     b_fit.clicked.connect(lambda e: radial_adjust())
+    w_showdistance.clicked.connect(lambda e: fxn_showdistance())
 
     dock = viewer.window.add_dock_widget(container,name=__plugin_name__)
     dock.container = container
+    
+    dock._timer_distance = QTimer()
+    dock._timer_distance.setInterval(int(1000//25.))
     return dock
 
 def initialize_radial_dock():
@@ -459,7 +493,8 @@ def fxn_prof_add():
     fname = dock_profile.profile_filename.text()
     if fname == "":
         return
-    try:
+    # try:
+    if 1:
         d = np.loadtxt(fname)
         if not d.ndim == 2 or not d.shape[0] == 3:
             print('Data is wrong',d.shape)
@@ -467,12 +502,18 @@ def fxn_prof_add():
         dock_profile.ax.plot(d[0],d[1],color='k',lw=1.)
         dock_profile.ax.set_xlim(d[0].min(),d[0].max())
         dock_profile.ax.set_ylim(0.,dock_profile.ax.get_ylim()[1])
+        
+        nlines = len(dock_profile.ax.lines)
+        for i in range(nlines):
+            line = dock_profile.ax.lines[i]
+            line.set_color(plt.cm.viridis(float(i)/float(nlines)))
+        
         dock_profile.ax.set_xlabel('Radial Distance (mm)')
         dock_profile.ax.set_ylabel('Absorption')
         dock_profile.fig.subplots_adjust(left=.2,bottom=.2)
         dock_profile.canvas.draw()
-    except:
-        print('Could not load %s'%(fname))
+    # except:
+        # print('Could not load %s'%(fname))
     
 def fxn_prof_select():
     global viewer,dock_profile
