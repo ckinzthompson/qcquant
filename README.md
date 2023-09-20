@@ -30,4 +30,4 @@ https://github.com/ckinzthompson/qcquant/assets/17210418/d76e4741-a87e-4ba4-9d54
 
 ## To Do List:
 1. Rewrite guide; record updated tutorials
-1. Integrate the curve to get growth rate (divide by time) -- need background correction
+2. Develop fitting notebook.
