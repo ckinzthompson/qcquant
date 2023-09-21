@@ -119,7 +119,7 @@ def radial_profile(data, center, cutoff,dx,method='mean'):
     elif method in ['var','norm_var']:
         rs,radial_profile_ = bin_count_var(rk,dk,dx)
         if method == 'norm_var':
-            radial_profile_ = np.sqrt(radial_profile)/bin_count_mean(rk,dk,dx)[1]
+            radial_profile_ = np.sqrt(radial_profile_)/bin_count_mean(rk,dk,dx)[1]
     return rs, radial_profile_
 
 
