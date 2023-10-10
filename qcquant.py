@@ -28,14 +28,14 @@ def load_tif(image_path):
     smax = 0
     with tifffile.TiffFile(image_path) as tif:
         # for key in tif.pages[0].tags.keys():
-            # print(key,tif.pages[0].tags[key])
+        #     print(key,tif.pages[0].tags[key].value)
         # print(tif.pages[0].tags['PhotometricInterpretation'].value)
         smax = int(tif.pages[0].tags['SMaxSampleValue'].value)
         print(str(tif.pages[0].tags['PhotometricInterpretation'].value))
         print('%d-bit image'%(int(np.log2(smax+1))))
-        if str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISBLACK':
+        if str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISBLACK' or tif.pages[0].tags['PhotometricInterpretation'].value == 1:
             pass
-        elif str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISWHITE':
+        elif str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISWHITE' or tif.pages[0].tags['PhotometricInterpretation'].value == 0:
             z = smax - z
             print('Inverted image')
         else:
