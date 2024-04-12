@@ -385,7 +385,7 @@ def initialize_qcquant_dock():
     b_load_data_epi = widgets.PushButton(text='Load Data (Epi-illumination)')
     # w_invert = widgets.CheckBox(text='Invert (12-bit) Data',value=False,name='invertdata')
 
-    w_dish_diameter = widgets.FloatSpinBox(value=36.,label='Dish O.D. (mm)',min=0,name='dishdiameter')
+    w_dish_diameter = widgets.FloatSpinBox(value=36.,label='Dish O.D. (mm)',min=0,max=1000.,name='dishdiameter')
     b_calc_conversion = widgets.PushButton(text='Calculate conversion (circle)')
     w_calibration = widgets.FloatSpinBox(value=47.4,label='Calibration (um/px)',min=0,name='calibration')
     w_extentfactor = widgets.FloatSpinBox(value=25.,label='Extent (mm)',min=0,name='extent_factor')
