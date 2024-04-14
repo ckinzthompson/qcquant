@@ -19,11 +19,11 @@ def explore_leftright(x,d):
         ax.axvline(x_right, color='k')
     interact(fxn, x_left=(0.0,x.max(),.01), x_right=(0.0,x.max(),.01));
 
-def format_report(theta):
+def format_report(theta,x=None,d=None,x_l=None,x_r=None):
     from IPython.display import display, Markdown
 
-    if theta.size == 8:
-        variables = [r'$\rho_g$',r'$k_g$',r'$k_c$',r'$\sigma_{peak}$',r'$k_d$',r'$x_g$',r'$x_d$',r'$b$']
+    if theta.size == 7:
+        variables = [r'$k_g$',r'$k_c$',r'$\sigma_{peak}$',r'$k_d$',r'$x_g$',r'$x_d$',r'$b$']
     elif theta.size == 5:
         variables = [r'$\rho_d$',r'$\sigma_{peak}$',r'$k_d$',r'$x_d$',r'$b$']
     else:
@@ -31,6 +31,17 @@ def format_report(theta):
         return
     for variable,value in zip(variables,theta):
         display(Markdown('%s = %.3f'%(variable,value)))
+
+    if theta.size == 7:
+        if x is None:
+            return
+        k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
+        delta_switch = std_peak*.5
+        x_switch_l = x_d - delta_switch
+        x_switch_r = x_d + delta_switch
+        rho_g = riemann(x,d,x_l,x_switch_l,b) / (-1./k_g *(np.exp(-k_g*(x_switch_l-x_g))-np.exp(-k_g*(x_l-x_g))) +1./k_c*(np.exp(k_c*(x_switch_l-x_g))-np.exp(k_c*(x_l-x_g))))
+
+        display(Markdown(r'$\rho_g = %.3f$'%(rho_g)))
 
 ########################################################################################################################
 ########################################################################################################################
@@ -165,13 +176,21 @@ def explore_diffusion(x,d,x_left,x_right,guess=None):
 ########################################################################################################################
 ########################################################################################################################
 
-def model_growthexpansion(x,x_l,x_r,theta):
-    rho_g,k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
+def riemann(x,d,x0,x1,b=0):
+	## linear interpolated center Riemann sum with baseline removed
+	keep = np.bitwise_and(x>=x0,x<=x1)
+	integral = np.sum((.5*(d[keep][1:]+d[keep][:-1])-b) * (x[keep][1:]-x[keep][:-1]))
+	return integral
+
+def model_growthexpansion(x,d,x_l,x_r,theta):
+    k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
     y = np.zeros_like(x) + b
 
     delta_switch = std_peak*.5
     x_switch_l = x_d - delta_switch
     x_switch_r = x_d + delta_switch
+
+    rho_g = riemann(x,d,x_l,x_switch_l,b) / (-1./k_g *(np.exp(-k_g*(x_switch_l-x_g))-np.exp(-k_g*(x_l-x_g))) +1./k_c*(np.exp(k_c*(x_switch_l-x_g))-np.exp(k_c*(x_l-x_g))))
 
     ## GC
     keep = np.bitwise_and(x>=x_l,x<x_switch_l)
@@ -190,7 +209,13 @@ def model_growthexpansion(x,x_l,x_r,theta):
     return y
 
 def minfxn_growthexpansion(theta,x,d,x_l,x_r):
-    rho_g,k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
+    k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
+
+    delta_switch = std_peak*.5
+    x_switch_l = x_d - delta_switch
+    x_switch_r = x_d + delta_switch
+    rho_g = riemann(x,d,x_l,x_switch_l,b) / (-1./k_g *(np.exp(-k_g*(x_switch_l-x_g))-np.exp(-k_g*(x_l-x_g))) +1./k_c*(np.exp(k_c*(x_switch_l-x_g))-np.exp(k_c*(x_l-x_g))))
+
     if rho_g < 0. or b < 0:
         return np.inf
     if k_g < 0 or k_c < 0 or std_peak <= .25 or k_d < 0:
@@ -199,22 +224,23 @@ def minfxn_growthexpansion(theta,x,d,x_l,x_r):
         return np.inf
 
     keep = np.bitwise_and(x>=x_l,x<=x_r)
-    if np.abs(x[keep][d[keep].argmax()]-x_d) > 5.:
-        return np.inf
-    ymodel = model_growthexpansion(x,x_l,x_r,theta)
+    # keep = np.bitwise_or(np.bitwise_and(x>=x_l,x<=x_switch_l),np.bitwise_and(x>=x_switch_r,x<=x_r))
+    # if np.abs(x[keep][d[keep].argmax()]-x_d) > 5.:
+        # return np.inf
+    ymodel = model_growthexpansion(x,d,x_l,x_r,theta)
     ss = np.nanmean(np.square(d[keep]-ymodel[keep]))
 
-    ## keep the piece-wise solution smooth-ish
-    ss += np.nanmean(np.square(np.gradient(ymodel[keep])))
+    # ## keep the piece-wise solution smooth-ish
+    # ss += np.nanmean(np.square(np.gradient(ymodel[keep])))
     
     return ss
 
-def plot_growthexpansion(x,d,x_l,x_r,theta,x_max=15.):
+def plot_growthexpansion(x,d,x_l,x_r,theta,x_max=None):
     '''
-    theta = {rho_g, k_g, k_c, std_peak, k_d, x_g, x_d, b}
+    theta = {k_g, k_c, std_peak, k_d, x_g, x_d, b}
     '''
-    rho_g,k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
-    mm = model_growthexpansion(x,x_l,x_r,theta)
+    k_g,k_c,std_peak,k_d,x_g,x_d,b = theta
+    mm = model_growthexpansion(x,d,x_l,x_r,theta)
     keep = np.bitwise_and(x>=x_l,x<=x_r)
 
     dmax = np.max(np.abs((mm-d)[keep]))
@@ -241,7 +267,9 @@ def plot_growthexpansion(x,d,x_l,x_r,theta,x_max=15.):
         # aa.axvspan(xmin=x_switch_l,xmax=x_switch_r,color='tab:green',alpha=.05,zorder=-5)
         aa.axvspan(xmin=x_switch_r,xmax=x_r,color='tab:blue',alpha=.05,zorder=-5)
 
-    ax[0].set_xlim(0,15)
+    if x_max is None:
+        x_max = x.max()
+    ax[0].set_xlim(0,x_max)
     ax[0].set_ylim(mm.min()-dmax,mm.max()+dmax)
     ax[1].set_ylim(-dmax*1.05,dmax*1.05)
     
@@ -256,42 +284,78 @@ def plot_growthexpansion(x,d,x_l,x_r,theta,x_max=15.):
 
 def guess_growthexpansion(x,d,x_l,x_r):
     keep = np.bitwise_and(x>=x_l,x<=x_r)
-    x_d = x[keep][d[keep].argmax()]
+    # x_d = x[keep][d[keep].argmax()]
+
+    #### guess background (b)
     b = d[keep].min()
-    
-    keep = np.bitwise_and(x>=x_l,x<=x_d)
-    x_min = x[keep][d[keep].argmin()]
-    
+
+    #### prepare residual    
     keep = np.bitwise_and(x>=x_l,x<=x_r)
     residual = d*0.
     residual[keep] = np.log(d[keep] - (b-1e-6))
-    keep = np.bitwise_and(x>=x_l,x<=x_min)
-    pfit_g = np.polyfit(x[keep],residual[keep],1) ## Growth
-    keep = np.bitwise_and(x>=x_min,x<=x_d)
-    pfit_c = np.polyfit(x[keep],residual[keep],1) ## Chemotaxis
+
+    #### guess peak location (x_d)
+    xx=x[keep]
+    yy = d[keep]-d[keep].min()
+    qq = np.exp(-.5/(1.0**2.)*(xx-xx.mean())**2.)
+    x_d = xx[np.convolve(qq,yy,mode='same').argmax()]
+    pad = 1.
+    keep = np.bitwise_and(x >= x_d-pad,x<=x_d+pad)
+    i_d = d[keep].argmax()
+    x_d = x[keep][i_d]
+    d_d = d[keep][i_d]
+
+    #### guess changeover between growth and chemotaxis
+    keep = np.bitwise_and(x>=x_l,x<=x_d)
+    x_min = x[keep][d[keep].argmin()]
+
+    ## get diffusion slope (k_d)
     keep = np.bitwise_and(x>=x_d,x<=x_r)
-    keep = np.bitwise_and(keep,d > np.log(.01))
-    pfit_d = np.polyfit(x[keep],residual[keep],1) ## Diffusion
-    
-    k_g = np.abs(pfit_g[0])
-    k_c = np.abs(pfit_c[0])
+    xx0 = x[keep][(d[keep]-b <= 0.9* (d_d-b)).argmax()]
+    xx1 = x[keep][(d[keep]-b <= 0.1* (d_d-b)).argmax()]
+    keep = np.bitwise_and(x>=xx0,x<=xx1)
+    pfit_d = np.polyfit(x[keep],residual[keep],1) 
     k_d = np.abs(pfit_d[0])
     # print('guess',k_g,k_c,k_d)
+
+    ## get peak width from HWHM into diffusion from peak (std_peak)
+    keep = np.bitwise_and(x>=x_d,x<=x_r)
+    xxh = x[keep][(d[keep]-b <= 0.5* (d_d-b)).argmax()]
+    fwhm = 2.*(xxh-x_d)
+    std_peak = fwhm/2.355
+
+    ## set switches to 0.5 sigma (x_switch_r, x_switch_l; std_peak)
+    x_switch_r = x_d + std_peak/2.
+    x_switch_l = x_d - std_peak/2.
+    if x_switch_l < x_min: ## fix if busted
+        x_switch_l = .5*(x_d+x_min)
+        std_peak = x_d-x_switch_l
+
+
+    d_l = d[np.argmin((x-x_l)**2.)]
+    d_min = d[np.argmin((x-x_min)**2.)]
+    keep = np.bitwise_and(x>=x_l,x<=x_min)
+    x_lmid = x[keep][np.argmax(d[keep]-d_min < .1*(d_l-d_min))]
+    keep = np.bitwise_and(x>=x_min,x<=x_d)
+    x_rmid = x[keep][np.argmax(d[keep]-d_min > .1*(d_d-d_min))]
+    x_r_upper = x[keep][np.argmax(d[keep]-d_min > .9*(d_d-d_min))]
     
-    std_peak = 1.
+    keep = np.bitwise_and(x>=x_l,x<= x_lmid)
+    pfit_g = np.polyfit(x[keep],residual[keep],1) ## Growth
+    keep = np.bitwise_and(x>=x_rmid,x<=x_r_upper)
+    pfit_c = np.polyfit(x[keep],residual[keep],1) ## Chemotaxis
+    k_g = np.abs(pfit_g[0])
+    k_c = np.abs(pfit_c[0])
 
     delta = 1./(k_g+k_c)*np.log(k_g/k_c)
-    
-    x_g = x_min - delta
-    rho_min = d[np.argmin(np.abs(x-x_min))]
-    rho_g = (rho_min-b)/2.
-    
-    theta = np.array((rho_g,k_g,k_c,std_peak,k_d,x_g,x_d,b))
+    x_g = x_min - delta 
+
+    theta = np.array((k_g,k_c,std_peak,k_d,x_g,x_d,b))
     return theta
 
 def fit_growthexpansion(x,d,x_l,x_r,guess=None,maxiters=1000,repeats=10,verbose=False):
     '''
-    theta = {rho_g, k_g, k_c, std_peak, k_d, x_g, x_d, b}
+    theta = {k_g, k_c, std_peak, k_d, x_g, x_d, b}
     '''
     if guess is None:
         theta = guess_growthexpansion(x,d,x_l,x_r)
@@ -300,7 +364,8 @@ def fit_growthexpansion(x,d,x_l,x_r,guess=None,maxiters=1000,repeats=10,verbose=
     
     for _ in range(repeats):
         out = minimize(minfxn_growthexpansion,theta,args=(x,d,x_l,x_r),method='Nelder-Mead',options={'maxiter':maxiters})
-        # print(out)
+        if verbose:
+            print(out)
         theta = out.x.copy()
 
     if verbose:
@@ -308,11 +373,11 @@ def fit_growthexpansion(x,d,x_l,x_r,guess=None,maxiters=1000,repeats=10,verbose=
         print(theta)
     return out.success,theta
 
-def explore_growthexpansion(x,d,x_left,x_right,guess=None):
+def explore_growthexpansion(x,d,x_left,x_right,guess=None,x_max=None):
     if guess is None:
         guess = guess_growthexpansion(x,d,x_left,x_right)
     
-    def fxn(rho_g=guess[0],k_g=guess[1],k_c=guess[2],std_peak=guess[3],k_d=guess[4],x_g=guess[5],x_d=guess[6],b=guess[7]):
-        theta = np.array((rho_g,k_g,k_c,std_peak,k_d,x_g,x_d,b))
-        fig,ax = plot_growthexpansion(x,d,x_left,x_right,theta)
-    interact(fxn,rho_g=(0,.2,.0001),k_g=(1e-2,2.,.001),k_c=(1e-2,2.,.001),std_peak=(.25,5,.01),k_d=(1e-2,2.,.001),x_g=(0,20,.001),x_d=(0,20,.001),b=(0.,.5,.001));
+    def fxn(k_g=guess[0],k_c=guess[1],std_peak=guess[2],k_d=guess[3],x_g=guess[4],x_d=guess[5],b=guess[6]):
+        theta = np.array((k_g,k_c,std_peak,k_d,x_g,x_d,b))
+        fig,ax = plot_growthexpansion(x,d,x_left,x_right,theta,x_max=x_max)
+    interact(fxn,k_g=(1e-2,2.,.001),k_c=(1e-2,2.,.001),std_peak=(.25,5,.01),k_d=(1e-2,2.,.001),x_g=(0,20,.001),x_d=(0,20,.001),b=(0.,.5,.001));
