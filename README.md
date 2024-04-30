@@ -59,6 +59,7 @@ qcquant
    4. A cropped (.png) image of the plate is also saved at this time. It has the same root filename as the text file containing the data. Note that if the "Plate Image: Locate Plate?" check box is checked in the "qcquant" tab then the center of the plate will be located and placed at the center of the image; if it is not checked, then the COM will be used as the center of the image.
 
 #### Tutorial: Calibration
+Note: this is a little old and the interface layout has changed, but the basic idea remains the same.
 https://github.com/ckinzthompson/qcquant/assets/17210418/d76e4741-a87e-4ba4-9d54-4b667e5decae
 
 
