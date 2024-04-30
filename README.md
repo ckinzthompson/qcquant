@@ -60,6 +60,7 @@ qcquant
 
 #### Tutorial: Calibration
 Note: this is a little old and the interface layout has changed, but the basic idea remains the same.
+
 https://github.com/ckinzthompson/qcquant/assets/17210418/d76e4741-a87e-4ba4-9d54-4b667e5decae
 
 
