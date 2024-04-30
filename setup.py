@@ -19,7 +19,7 @@ CLASSIFIERS = [
 INSTALL_REQUIRES = [
 	"numpy>=1.24.0",
 	"numba",
-	"tifffile"
+	"tifffile",
 	"scipy",
 	"matplotlib>=3.7.0",
 	"napari>=0.4.17",
