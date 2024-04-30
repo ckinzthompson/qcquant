@@ -178,11 +178,11 @@ def report(theta):
 	from IPython.display import display, Markdown
 
 	if theta.size == 7:
-		variables = [r'$\rho_0$',r'$b_{\;}$',r'$k_g$',r'$k_c$',r'$k_d$',r'$x_g$',r'$x_d$']
+		variables = [r'$\rho_0$',r'$b_{\;\;}$',r'$k_g$',r'$k_c$',r'$k_d$',r'$x_g$',r'$x_d$']
 	else:
 		display('Theta is not properly formatted')
 		return
 	sout = r''
 	for variable,value in zip(variables,theta):
-		sout += r'%s = %.4f $\\$ '%(variable,value)
+		sout += r'%s = %.4f $ \\ $ '%(variable,value)
 	display(Markdown(sout)) 
