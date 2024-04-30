@@ -2,6 +2,8 @@
 Quantitative Chemotaxis Quantification (qcquant)
 Version: 0.4.0
 
+![Chemotaxis Model](example_data/math_model.png)
+
 ## Install
 
 #### Set up a Python virtual environment
