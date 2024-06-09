@@ -14,3 +14,4 @@ __author__ = "ckinzthompson"
 
 from .qcquant import run_app
 from . import qcquant_fitting as fitting
+from . import qcquant_calibrate as calibrate

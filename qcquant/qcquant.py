@@ -4,8 +4,6 @@ __plugin_name__ = 'qcquant (0.3.0)'
 ######## IMPORTANT GLOBAL VARIABLES ########
 viewer = None       ## Napari viewer    ####
 dock_qcquant = None ## QCQuant config dock #
-dock_radial = None  ## Radial plot dock  ###
-dock_profile = None ## Profile plot dock ###
 ############################################
 
 import napari
@@ -15,6 +13,7 @@ import numpy as np
 import numba as nb
 import scipy.ndimage as nd
 from scipy.optimize import minimize
+from scipy.interpolate import RectBivariateSpline
 import matplotlib.pyplot as plt
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QPushButton,QFileDialog,QSizePolicy,QDockWidget,QHBoxLayout,QLabel,QLineEdit
 from PyQt5.QtCore import QTimer
@@ -32,31 +31,34 @@ def load_tif(image_path):
 		# print(tif.pages[0].tags['PhotometricInterpretation'].value)
 		smax = int(tif.pages[0].tags['SMaxSampleValue'].value)
 		print(str(tif.pages[0].tags['PhotometricInterpretation'].value))
-		print('%d-bit image'%(int(np.log2(smax+1))))
+		print('%d-bit image; Maximum counts is %d'%(int(np.log2(smax+1)),smax))
 		if str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISBLACK' or tif.pages[0].tags['PhotometricInterpretation'].value == 1:
 			pass
+			print('Regular image')
 		elif str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISWHITE' or tif.pages[0].tags['PhotometricInterpretation'].value == 0:
-			z = smax - z
 			print('Inverted image')
 		else:
 			raise Exception('Cannot interpret photometric approach')
-	return z
+	return z,smax
 
-def calculate_absorbance(z,z0,mode='trans'):
+def calculate_intensity(z,z0,mode='trans',dust_filter=True):
 	if mode == 'trans':
-		transmittance = z.astype('float')/z0.astype('float')
-		absorbance = -np.log10(transmittance)
+		intensity = z.astype('float')/z0.astype('float')
 	elif mode == 'epi':
-		absorbance = z.astype('float') / 4096.
+		intensity = z.astype('float') / z0
 	else:
 		raise Exception('%s mode is not implemented yet'%(mode))
+
+	## don't play around
+	intensity[intensity > 1.] = 1.
+	intensity[intensity < 0 ] = 0. 
 	
-	## tif files are 16bit images so limit absorbance accordingly
-	limit = np.log10(2**16)
-	absorbance[absorbance > limit] = limit 
-	absorbance[absorbance < -limit] = -limit 
-	
-	return absorbance
+	if dust_filter:
+		intensity = nd.median_filter(intensity,7)
+		intensity = nd.gaussian_filter(intensity,2)
+		intensity = nd.median_filter(intensity,7)
+
+	return intensity
 
 @nb.njit
 def bin_count_mean(rk,dk,dx):
@@ -119,42 +121,8 @@ def radial_profile(data, center, cutoff,dx,method='mean'):
 	elif method in ['var','norm_var']:
 		rs,radial_profile_ = bin_count_var(rk,dk,dx)
 		if method == 'norm_var':
-			radial_profile_ = np.sqrt(radial_profile_)/bin_count_mean(rk,dk,dx)[1]
+			radial_profile_ = np.sqrt(radial_profile_)/(bin_count_mean(rk,dk,dx)[1] + 1)
 	return rs, radial_profile_
-
-
-def get_prefs():
-	global viewer,dock_qcquant
-	prefs = dock_qcquant.container.asdict()
-	return prefs 
-
-def com_to_top():
-	global viewer
-	if 'com' in viewer.layers:
-		viewer.layers.move(viewer.layers.index('com'),-1)
-
-def contrast(layername='absorbance'):
-	global viewer
-	dmin = viewer.layers[layername].data.min()
-	dmax = viewer.layers[layername].data.max()
-	delta = (dmax-dmin)*1.
-	viewer.layers[layername].contrast_limits_range = (dmin-delta,dmax+delta)
-	viewer.layers[layername].contrast_limits = (dmin,dmax)
-	
-def new_com(data):
-	global viewer
-	ls = [layer for layer in viewer.layers if layer.name == 'com']
-	if len(ls) == 0:
-		com = np.array([data.shape[0]/2.,data.shape[1]/2.])
-		viewer.add_points(com,name='com',face_color='red',edge_color='darkred')
-
-def add_flat(flat):
-	global viewer
-	if 'flat' in viewer.layers:
-		viewer.layers.remove('flat')
-	viewer.add_image(flat,name='flat')
-	com_to_top()
-	contrast('flat')
 
 def radial_adjust():
 	global viewer
@@ -172,11 +140,16 @@ def radial_adjust():
 		ll = 64
 		if i < -ll or i > ll or j < -ll or j > ll:
 			return np.inf
-		x,y = radial_profile(viewer.layers['absorbance'].data, com+theta, prefs['fit_extent']/(prefs['calibration']/1000.), prefs['bin_width']/(prefs['calibration']/1000.), method='norm_var')
-		if prefs['locate_mode'] == 'Max':
-			out = y.max()
-		elif prefs['locate_mode'] == 'Mean':
-			out = y.mean()
+		
+		fit_extent = 5
+		x,y = radial_profile(viewer.layers['scattering'].data, com+theta, fit_extent/(prefs['calibration']/1000.), prefs['bin_width']/(prefs['calibration']/1000.), method='norm_var')
+		out = np.nanmean(y)
+		print(out)
+		# x,y = radial_profile(viewer.layers['scattering'].data, com+theta, prefs['fit_extent']/(prefs['calibration']/1000.), prefs['bin_width']/(prefs['calibration']/1000.), method='norm_var')
+		# if prefs['locate_mode'] == 'Max':
+		# 	out = y.max()
+		# elif prefs['locate_mode'] == 'Mean':
+		# 	out = y.mean()
 		return out
 	
 	out = minimize(minfxn,np.array((0.,0.)),args=(com,),method='Nelder-Mead',options={'initial_simplex':np.array(((1.,1.),(0.,1),(1.,0)))})
@@ -184,46 +157,134 @@ def radial_adjust():
 	viewer.layers['com'].data[-1] += out.x
 	viewer.layers['com'].refresh()
 
+
+def alignment_upscaled_fft_phase(d1,d2):
+	'''
+	from: highfret
+
+	Find the linear shift in an image in phase space - upscales to super-resolve shift - d1 into d2
+
+	input:
+		* d1 - image 1 (Lx,Ly)
+		* d2 - image 2 (Lx,Ly)
+	output:
+		* polynomial coefficients (K=1) with linear shift
+	'''
+
+	## Calculate Cross-correlation
+	f1 = np.fft.fft2(d1-d1.mean())
+	f2 = np.fft.fft2(d2-d2.mean())
+	f = np.conjugate(f1)*f2 # / (np.abs(f1)*np.abs(f2))
+	d = np.fft.ifft2(f).real
+
+	## Find maximum in c.c.
+	s1,s2 = np.nonzero(d==d.max())
+
+	#### Interpolate for finer resolution
+	## cut out region
+	l = 5.
+	xmin = int(np.max((0.,s1[0]-l)))
+	xmax = int(np.min((d.shape[0],s1[0]+l)))
+	ymin = int(np.max((0.,s2[0]-l)))
+	ymax = int(np.min((d.shape[1],s2[0]+l)))
+	dd = d[xmin:xmax,ymin:ymax]
+
+	## calculate interpolation
+	x = np.arange(xmin,xmax)
+	y = np.arange(ymin,ymax)
+	interp = RectBivariateSpline(x,y,dd)
+
+	## interpolate new grid
+	x = np.linspace(xmin,xmax,(xmax-xmin)*10)
+	y = np.linspace(ymin,ymax,(ymax-ymin)*10)
+	di = interp(x,y)
+	# return di
+
+	## get maximum in interpolated c.c. for sub-pixel resolution
+	xy = np.nonzero(di==di.max())
+
+	## get interpolated shifts
+	dx_12 = x[xy[0][0]]
+	dy_12 = y[xy[1][0]]
+	if dx_12 > d.shape[0]/2:
+		dx_12 -= d.shape[0]
+	if dy_12 > d.shape[1]/2:
+		dy_12 -= d.shape[1]
+
+	return np.array((dx_12,dy_12))
+	
+def guess_com():
+	global viewer
+	prefs = get_prefs()
+	com = viewer.layers['com'].data[-1].astype('int')
+	d = viewer.layers['scattering'].data
+
+	dd = np.zeros((d.shape[0]*3,d.shape[1]*3)) ## pad out neighboring cells
+	dd[d.shape[0]:d.shape[0]*2,d.shape[1]:d.shape[1]*2] = d
+
+	center = com.astype('double') + 0.
+	cutoff = (prefs['dishdiameter']/2.+1.)/(prefs['calibration']/1000.)
+	x,y = np.indices((dd.shape))
+	r = np.sqrt((x.astype('float') - float((0.5+center[0])//1))**2 + (y.astype('float') - float((0.5+center[1])//1))**2)
+	keep = r <= cutoff
+	ddd = keep.astype('float')
+
+	shift = alignment_upscaled_fft_phase(dd,ddd)
+	com = com.astype("double") - shift
+	com -= np.array(d.shape).astype('double')
+	com = com.astype('int')
+	print('Guesses COM:',com)
+	return com
+
+def get_prefs():
+	global viewer,dock_qcquant
+	prefs = dock_qcquant.container.asdict()
+	return prefs 
+
+def contrast(layername='scattering'):
+	global viewer
+	dmin = viewer.layers[layername].data.min()
+	dmax = viewer.layers[layername].data.max()
+	delta = (dmax-dmin)*1.
+	viewer.layers[layername].contrast_limits_range = (dmin-delta,dmax+delta)
+	viewer.layers[layername].contrast_limits = (dmin,dmax)
+
+def com_to_top():
+	global viewer
+	if 'com' in viewer.layers:
+		viewer.layers.move(viewer.layers.index('com'),-1)
+
+def new_com(data):
+	global viewer
+	ls = [layer for layer in viewer.layers if layer.name == 'com']
+	if len(ls) == 0:
+		com = np.array([data.shape[0]/2.,data.shape[1]/2.])
+		viewer.add_points(com,name='com',face_color='red',edge_color='darkred')
+
+def find_com():
+	com = guess_com()
+	viewer.layers['com'].data[-1] = com
+	viewer.layers['com'].refresh()
+
 def save_radial():
-	global viewer,dock_radial
-	if dock_radial.x is None or dock_radial.y is None or dock_radial.y2 is None:
+	global viewer
+	if dock_qcquant.x is None or dock_qcquant.y is None or dock_qcquant.y2 is None:
 		return
 		
 	prefs = get_prefs()
-	fname = QFileDialog.getSaveFileName(parent=dock_radial, caption="Save Radial Analysis")[0]
+	fname = QFileDialog.getSaveFileName(parent=dock_qcquant, caption="Save Radial Analysis")[0]
 	if not fname == "":
-		np.savetxt(fname+'.txt',np.array((dock_radial.x,dock_radial.y,dock_radial.y2)))
+		np.savetxt(fname+'.txt',np.array((dock_qcquant.x,dock_qcquant.y,dock_qcquant.y2)))
 		print('Saved:',fname+'.txt')
 		
 		save_img(fname)
 		print('Saved:',fname+'.png')
 
-	
 def save_img(fname):
 	global viewer
 	prefs = get_prefs()
 	com = viewer.layers['com'].data[-1].astype('int')
-	d = viewer.layers['absorbance'].data
-	# print(com)
-	
-	if prefs['centerimg']:
-		def minfxn(theta,com):
-			global viewer
-			prefs = get_prefs()
-			i,j = theta
-			ll = 64
-			if i < -ll or i > ll or j < -ll or j > ll:
-				return np.inf
-			x,y = radial_profile(d, com+theta, (prefs['dishdiameter']/2.+1.)/(prefs['calibration']/1000.), prefs['bin_width']/(prefs['calibration']/1000.), method='norm_var')
-			edge = 3./(prefs['calibration']/1000.)
-			ddr = prefs['dishdiameter']/2./(prefs['calibration']/1000.)
-			keep = np.bitwise_and(x>(ddr-edge),x<(ddr+edge))
-			out = y[keep].mean()
-			return out
-		print('Finding Image COM')
-		out = minimize(minfxn, np.array((0.,0.)), args=(com,), method='Nelder-Mead', options={'initial_simplex':np.array(((1.,1.),(0.,1),(1.,0)))})
-		com += out.x.astype('int')
-		print('Done',com)
+	d = viewer.layers['scattering'].data
 	
 	nx,ny = d.shape
 	r = prefs['dishdiameter']/2. + 1.
@@ -252,75 +313,47 @@ def save_img(fname):
 	plt.close()
 
 def fxn_radial():
-	global viewer,dock_qcquant,dock_radial
+	global viewer,dock_qcquant
 	prefs = get_prefs()
 	ls = [layer for layer in viewer.layers if layer.name == 'com']
 	if len(ls) == 0:
 		print('need to get a com layer')
 		return
 
-	# com = ls[0]._com
-	# r = ls[0]._r
 	com = viewer.layers['com'].data[-1]
 
-#	 x,y = radial_profile(viewer.layers['absorbance'].data, com, r*prefs['extent_factor'])
-	x,y = radial_profile(viewer.layers['absorbance'].data, com,prefs['extent_factor']/(prefs['calibration']/1000.),prefs['bin_width']/(prefs['calibration']/1000.))
+	x,y = radial_profile(viewer.layers['scattering'].data, com,prefs['extent_factor']/(prefs['calibration']/1000.),prefs['bin_width']/(prefs['calibration']/1000.))
 	x *= prefs['calibration']/1000.
-#	 y2 = nd.median_filter(y,int(prefs['smooth_kernel']))
 	y2 = nd.gaussian_filter1d(y,prefs['smooth_kernel'])
 	
-	dock_radial.x = x
-	dock_radial.y = y
-	dock_radial.y2 = y2
+	dock_qcquant.x = x
+	dock_qcquant.y = y
+	dock_qcquant.y2 = y2
 
-	dock_radial.ax.cla()
-	dock_radial.ax.plot(x,y,color='k',lw=1.2)
-	dock_radial.ax.plot(x,y2,color='r',alpha=.8,lw=.8)
-	dock_radial.ax.set_xlim(0,x.max())
-	dock_radial.ax.set_ylim(0.,dock_radial.ax.get_ylim()[1])
-	dock_radial.ax.set_xlabel('Radial Distance (mm)')
-	dock_radial.ax.set_ylabel('Absorption')
-	dock_radial.fig.subplots_adjust(left=.2,bottom=.2)
-	dock_radial.canvas.draw()
-	dock_radial.raise_()
-
-def fxn_load_flat():
-	global viewer
-	prefs = get_prefs()
-	flat = load_tif(prefs['flat'])
-	# if prefs['invertdata']:
-		# flat = 4096-flat
-	add_flat(flat)
-
-def fxn_load_data_trans():
-	global viewer
-	prefs = get_prefs()
-	data = load_tif(prefs['absorbance'])
-	# if prefs['invertdata']:
-		# data = 4096-data
-	if not 'flat' in viewer.layers:
-		flat = np.zeros_like(data) + data.max()
-		add_flat(flat)
-	absorbance = calculate_absorbance(data,viewer.layers['flat'].data,mode='trans')
-	if 'absorbance' in viewer.layers:
-		viewer.layers.remove('absorbance')
-	viewer.add_image(absorbance,name='absorbance')
-	com_to_top()
-	contrast('absorbance')
-	new_com(data)
+	dock_qcquant.ax.cla()
+	dock_qcquant.ax.plot(x,y,color='k',lw=1.2)
+	dock_qcquant.ax.plot(x,y2,color='r',alpha=.8,lw=.8)
+	dock_qcquant.ax.set_xlim(0,x.max())
+	dock_qcquant.ax.set_ylim(0.,1.)
+	dock_qcquant.ax.set_xlabel('Radial Distance (mm)')
+	dock_qcquant.ax.set_ylabel('Scattering')
+	dock_qcquant.fig.subplots_adjust(left=.2,bottom=.2)
+	dock_qcquant.canvas.draw()
+	dock_qcquant.raise_()
 
 def fxn_load_data_epi():
 	global viewer
 	prefs = get_prefs()
-	data = load_tif(prefs['absorbance'])
-	# if prefs['invertdata']:
-		# data = 4096-data
-	absorbance = calculate_absorbance(data,None,mode='epi')
-	if 'absorbance' in viewer.layers:
-		viewer.layers.remove('absorbance')
-	viewer.add_image(absorbance,name='absorbance')
+	data,smax = load_tif(prefs['scattering'])
+	### Coming from a biorad gel doc, images seem to be inverted (both epi and trans) (i.e., so that you get positive bands)
+	## this is borderline criminal.... so flip it back
+	data = smax - data
+	scattering = calculate_intensity(data,smax,mode='epi',dust_filter=True)
+	if 'scattering' in viewer.layers:
+		viewer.layers.remove('scattering')
+	viewer.add_image(scattering,name='scattering')
 	com_to_top()
-	contrast('absorbance')
+	contrast('scattering')
 	new_com(data)
 
 def fxn_calc_conversion():
@@ -352,24 +385,25 @@ def fxn_calc_conversion():
 	# viewer.window._dock_widgets[__plugin_name__].container.calibration.value = factor
 
 
-def update_dcom():
-	global viewer,dock_qcquant
-	
-	if 'com' in viewer.layers:
-		prefs = get_prefs()
-		com = np.array(viewer.layers['com'].data[-1])
-		cursor = np.array(viewer.cursor.position)
-		distance = np.linalg.norm(cursor-com)
-		distance *= prefs['calibration']/1000.
-		dock_qcquant.container['showdistance'].text = 'Distance from COM: %.1f mm'%(distance)
-	else:
-		dock_qcquant.container['showdistance'].text = 'Distance from COM: '
 
 def fxn_showdistance():
 	global viewer,dock_qcquant
 	prefs = get_prefs()
 	state = prefs['showdistance']
 	
+	def update_dcom():
+		global viewer,dock_qcquant
+		
+		if 'com' in viewer.layers:
+			prefs = get_prefs()
+			com = np.array(viewer.layers['com'].data[-1])
+			cursor = np.array(viewer.cursor.position)
+			distance = np.linalg.norm(cursor-com)
+			distance *= prefs['calibration']/1000.
+			dock_qcquant.container['showdistance'].text = 'Distance from COM: %.1f mm'%(distance)
+		else:
+			dock_qcquant.container['showdistance'].text = 'Distance from COM: '
+
 	if state:
 		dock_qcquant._timer_distance.timeout.connect(lambda : update_dcom())
 		dock_qcquant._timer_distance.start()
@@ -382,67 +416,34 @@ def fxn_showdistance():
 def initialize_qcquant_dock():
 	global viewer
 
-	w_flat = widgets.FileEdit(mode='r',label='Flat-field File',name='flat')
-	b_load_flat = widgets.PushButton(text='Load Flat')
-	w_data = widgets.FileEdit(mode='r',label='Data File',name='absorbance')
-	b_load_data_trans = widgets.PushButton(text='Load Data (Trans-illumination)')
+	w_data = widgets.FileEdit(mode='r',label='Data File',name='scattering')
 	b_load_data_epi = widgets.PushButton(text='Load Data (Epi-illumination)')
-	# w_invert = widgets.CheckBox(text='Invert (12-bit) Data',value=False,name='invertdata')
-
 	w_dish_diameter = widgets.FloatSpinBox(value=100.0,label='Dish O.D. (mm)',min=0,max=1000.,name='dishdiameter')
 	b_calc_conversion = widgets.PushButton(text='Calculate conversion (circle)')
 	w_calibration = widgets.FloatSpinBox(value=92.2,label='Calibration (um/px)',min=0,name='calibration')
 	w_extentfactor = widgets.FloatSpinBox(value=50.,label='Extent (mm)',min=0,name='extent_factor')
-	w_fitextent = widgets.FloatSpinBox(value=5.,label='Locate Extent (mm)',min=0,name='fit_extent')
-	w_filterwidth = widgets.FloatSpinBox(value=10.,label='Filter Width',min=0.,name='filter_width')
 	w_binwidth = widgets.FloatSpinBox(value=.025,label='Radial Bin Width (mm)',min=0.,name='bin_width',step=.001)
 	w_smoothkernel = widgets.FloatSpinBox(value=2.,label='Smoothing Kernel (bins)',min=0.,name='smooth_kernel')
-	w_locatemode = widgets.ComboBox(value='Mean',label='Locate Mode',choices=['Max','Mean'],name='locate_mode')
-	w_centerimg = widgets.CheckBox(text='Plate Image: Locate Plate?',value=True,name='centerimg')
-	w_showdistance = widgets.CheckBox(text='Distance from COM:',value=False,name='showdistance')
-	b_locate = widgets.PushButton(text='Locate Center')
+	w_showdistance = widgets.CheckBox(text='Display distance from COM:',value=False,name='showdistance')
+	b_locate = widgets.PushButton(text='Locate Plate Center of Mass (COM)')
 	b_radial = widgets.PushButton(text='Calculate Radial Average')
-	b_fit = widgets.PushButton(text='Find Radial Center')
-	# b_save = widgets.PushButton(text='Save')
+	b_fit = widgets.PushButton(text='Locate Local Symmetric COM')
+
 	container = widgets.Container(widgets=[
-		w_flat,
-		b_load_flat,
 		w_data,
-		b_load_data_trans,
 		b_load_data_epi,
 		w_dish_diameter,
 		w_calibration,
 		b_calc_conversion,
-		w_fitextent,
-		w_locatemode,
+		b_locate,
 		b_fit,
+		w_showdistance,
 		w_extentfactor,
 		w_binwidth,
 		w_smoothkernel,
 		b_radial,
-		w_centerimg,
-		w_showdistance,
 	])
-	
-	b_locate.clicked.connect(lambda e: fxn_locate())
-	b_radial.clicked.connect(lambda e: fxn_radial())
-	b_load_flat.clicked.connect(lambda e: fxn_load_flat())
-	b_load_data_trans.clicked.connect(lambda e: fxn_load_data_trans())
-	b_load_data_epi.clicked.connect(lambda e: fxn_load_data_epi())
-	b_calc_conversion.clicked.connect(lambda e: fxn_calc_conversion())
-	b_fit.clicked.connect(lambda e: radial_adjust())
-	w_showdistance.clicked.connect(lambda e: fxn_showdistance())
 
-	dock = viewer.window.add_dock_widget(container,name=__plugin_name__)
-	dock.container = container
-	
-	dock._timer_distance = QTimer()
-	dock._timer_distance.setInterval(int(1000//25.))
-	return dock
-
-def initialize_radial_dock():
-	global viewer
-	
 	fig,ax = plt.subplots(1,figsize=(4,3))
 	canvas = FigureCanvas(fig)
 	toolbar = NavigationToolbar(canvas)
@@ -455,6 +456,7 @@ def initialize_radial_dock():
 
 	qw = QWidget()
 	vb = QVBoxLayout()
+	vb.addWidget(container.native)
 	vb.addWidget(canvas)
 	vb.addWidget(toolbar)
 	vb.addWidget(b2)
@@ -462,133 +464,35 @@ def initialize_radial_dock():
 	vb.addStretch()
 	qw.setLayout(vb)
 
-	qdw = viewer.window.add_dock_widget(qw,name='Radial Average')
-	qdw.setFeatures(QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable)
-	qdw.fig = fig
-	qdw.ax = ax
-	qdw.canvas = canvas
-	qdw.toolbar = toolbar
+	dock = viewer.window.add_dock_widget(qw,name=__plugin_name__)
+	dock.container = container
+	dock._timer_distance = QTimer()
+	dock._timer_distance.setInterval(int(1000//25.))
+
+	dock.setFeatures(QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable)
+	dock.fig = fig
+	dock.ax = ax
+	dock.canvas = canvas
+	dock.toolbar = toolbar
 	
-	qdw.x = None
-	qdw.y = None
-	qdw.y2 = None
-	return qdw
+	dock.x = None
+	dock.y = None
+	dock.y2 = None
 	
-	
-def fxn_prof_save():
-	global viewer,dock_profile
-	print('save')
-
-	fname = QFileDialog.getSaveFileName(parent=dock_radial, caption="Save Figure",filter='*.pdf')[0]
-	if not fname == "":
-		dock_profile.fig.savefig(fname)
-
-def fxn_prof_clear():
-	global viewer,dock_profile
-	dock_profile.ax.cla()
-	dock_profile.ax.set_xlabel('Radial Distance (mm)')
-	dock_profile.ax.set_ylabel('Absorption')
-	dock_profile.fig.subplots_adjust(left=.2,bottom=.2)
-	dock_profile.canvas.draw()
-	
-
-def fxn_prof_add():
-	global viewer,dock_profile
-	fname = dock_profile.profile_filename.text()
-	if fname == "":
-		return
-	# try:
-	if 1:
-		d = np.loadtxt(fname)
-		if not d.ndim == 2 or not d.shape[0] == 3:
-			print('Data is wrong',d.shape)
-			return
-		dock_profile.ax.plot(d[0],d[1],color='k',lw=1.)
-		dock_profile.ax.set_xlim(d[0].min(),d[0].max())
-		dock_profile.ax.set_ylim(0.,dock_profile.ax.get_ylim()[1])
-		
-		nlines = len(dock_profile.ax.lines)
-		for i in range(nlines):
-			line = dock_profile.ax.lines[i]
-			line.set_color(plt.cm.viridis(float(i)/float(nlines)))
-		
-		dock_profile.ax.set_xlabel('Radial Distance (mm)')
-		dock_profile.ax.set_ylabel('Absorption')
-		dock_profile.fig.subplots_adjust(left=.2,bottom=.2)
-		dock_profile.canvas.draw()
-	# except:
-		# print('Could not load %s'%(fname))
-	
-def fxn_prof_select():
-	global viewer,dock_profile
-	fname = QFileDialog.getOpenFileName(parent=dock_profile, caption="Load Profile file")[0]
-	if not fname == "":
-		dock_profile.profile_filename.setText(fname)
-		
-		
-		
-def initialize_profile_dock():
-	global viewer
-
-	fig,ax = plt.subplots(1,figsize=(4,3))
-	canvas = FigureCanvas(fig)
-	toolbar = NavigationToolbar(canvas)
-	# canvas.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)
-	canvas.setSizePolicy(QSizePolicy.Fixed,QSizePolicy.Fixed)
-	b = QPushButton('Save Figure')
-	b.clicked.connect(lambda e: fxn_prof_save())
-	b2 = QPushButton('Clear Plot')
-	b2.clicked.connect(lambda e: fxn_prof_clear())
-	b_add = QPushButton('Add')
-	b_add.clicked.connect(lambda e: fxn_prof_add())
-
-
-	profile_filename = QLineEdit()
-	profile_filename.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Fixed)
-	b_selectprofile = QPushButton('Select File')
-	b_selectprofile.clicked.connect(lambda e: fxn_prof_select())
-	qwf = QWidget()
-	hbox = QHBoxLayout()
-	hbox.addWidget(QLabel("Profile File"))
-	hbox.addWidget(profile_filename)
-	hbox.addWidget(b_selectprofile)
-	hbox.addWidget(b_add)
-	qwf.setLayout(hbox)
-
-	qw = QWidget()
-	vb = QVBoxLayout()
-	vb.addWidget(canvas)
-	vb.addWidget(toolbar)
-	vb.addWidget(qwf)
-	vb.addWidget(b2)
-	vb.addWidget(b)
-	vb.addStretch()
-	qw.setLayout(vb)
-
-	qdw = viewer.window.add_dock_widget(qw,name='Profile Plot')
-	qdw.setFeatures(QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetMovable)
-	qdw.fig = fig
-	qdw.ax = ax
-	qdw.canvas = canvas
-	qdw.toolbar = toolbar
-
-	qdw.x = None
-	qdw.y = None
-	qdw.y2 = None
-	
-	qdw.profile_filename = profile_filename
-	return qdw
-	
+	b_locate.clicked.connect(lambda e: find_com())
+	b_radial.clicked.connect(lambda e: fxn_radial())
+	b_load_data_epi.clicked.connect(lambda e: fxn_load_data_epi())
+	b_calc_conversion.clicked.connect(lambda e: fxn_calc_conversion())
+	b_fit.clicked.connect(lambda e: radial_adjust())
+	w_showdistance.clicked.connect(lambda e: fxn_showdistance())
+	return dock
 	
 def run_app():
-	global viewer,dock_qcquant,dock_radial,dock_profile
+	global viewer,dock_qcquant
 
 	viewer = napari.Viewer()
 	dock_qcquant = initialize_qcquant_dock()
-	dock_radial = initialize_radial_dock()
-	dock_profile = initialize_profile_dock()
-	viewer.window._qt_window.tabifyDockWidget(dock_qcquant,dock_radial)
-	viewer.window._qt_window.tabifyDockWidget(dock_radial,dock_profile)
+	# viewer.window._qt_window.tabifyDockWidget(dock_qcquant,dock_profile)
 	dock_qcquant.raise_()
 	napari.run()
 	
