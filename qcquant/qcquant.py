@@ -422,7 +422,7 @@ def initialize_qcquant_dock():
 	b_calc_conversion = widgets.PushButton(text='Calculate conversion (circle)')
 	w_calibration = widgets.FloatSpinBox(value=92.2,label='Calibration (um/px)',min=0,name='calibration')
 	w_extentfactor = widgets.FloatSpinBox(value=50.,label='Extent (mm)',min=0,name='extent_factor')
-	w_binwidth = widgets.FloatSpinBox(value=.025,label='Radial Bin Width (mm)',min=0.,name='bin_width',step=.001)
+	w_binwidth = widgets.FloatSpinBox(value=.05,label='Radial Bin Width (mm)',min=0.,name='bin_width',step=.001)
 	w_smoothkernel = widgets.FloatSpinBox(value=2.,label='Smoothing Kernel (bins)',min=0.,name='smooth_kernel')
 	w_showdistance = widgets.CheckBox(text='Display distance from COM:',value=False,name='showdistance')
 	b_locate = widgets.PushButton(text='Locate Plate Center of Mass (COM)')

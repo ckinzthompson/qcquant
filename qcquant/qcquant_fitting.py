@@ -3,8 +3,12 @@ import matplotlib.pyplot as plt
 from scipy.special import hyp2f1
 from scipy.optimize import minimize
 
-def load(fn):
+def load(fn,fn_theta=None):
 	x,d,_ = np.loadtxt(fn)
+	if not fn_theta is None:
+		theta = np.load(fn_theta)
+		from .qcquant_calibrate import attenuance
+		d = attenuance(d,theta)
 	return x,d
 
 def _half_integral(x,a,b,c,d):
