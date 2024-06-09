@@ -3,7 +3,7 @@ qcquant - Quantitative Chemotaxis Quantification
 """
 
 __title__ = "qcquant"
-__version__ = "0.5.0"
+__version__ = "0.5.1"
 
 __description__ = "qcquant is for analyzing bacterial chemotaxis plate assays"
 
