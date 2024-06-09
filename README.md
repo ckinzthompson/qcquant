@@ -1,8 +1,8 @@
 # qcquant.py
 Quantitative Chemotaxis Quantification (qcquant)
-Version: 0.4.0
+Version: 0.5.0
 
-![Chemotaxis Model](example_data/math_model.png)
+![Chemotaxis Model](example_data/figures/math_model.png)
 
 ## Install
 
