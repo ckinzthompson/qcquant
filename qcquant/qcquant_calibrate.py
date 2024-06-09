@@ -62,6 +62,19 @@ def minfxn(theta,N,S):
 		return np.inf
 	return np.mean(np.square(S-fxn_S(N,*theta)))
 
+def attenuance(y,theta):
+	I0f,I0B,sigmaL = theta
+	A = np.log(I0f/((I0f+I0B)-y))
+
+	Imax = 1.
+	Nmax = 1/sigmaL*np.log(I0f/((I0f+I0B)-Imax))
+	Amax = Nmax*sigmaL
+
+	A[A<0] = 0
+	A[A>Amax] = Amax
+	
+	return A
+
 def calibrate(x,y):
 	'''
 	x should be agarose concentration milli%

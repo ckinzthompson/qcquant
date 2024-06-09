@@ -166,7 +166,7 @@ def plot(x,d,xl,xr,theta,x_plotmin=None,x_plotmax=None):
 	ax[1].set_ylim(-dmax*1.05,dmax*1.05)
 
 	ax[0].set_title(r'$\phi = %.3f$'%(phi))
-	ax[0].set_ylabel('Scattering')
+	ax[0].set_ylabel('Attenuance')
 	ax[1].set_ylabel('Residual')
 	ax[1].set_xlabel('Radial Distance (mm)')
 
