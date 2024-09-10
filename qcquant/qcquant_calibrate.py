@@ -72,7 +72,7 @@ def lnL(theta,N,S):
 	camera_max = 4095. * 5.
 	Sq = fxn_S(N,*theta)+(1./4095) ## don't want 0 variance, so min at 1 DU
 	lnLs = -.5*(np.log(2.*np.pi*Sq)+np.log(camera_max)) -.5/Sq*(S-Sq)**2. * camera_max
-	lnLs = np.sum(lnLs) 
+	lnLs = np.sum(lnLs)
 	if np.isnan(lnLs):
 		return -np.inf
 	return lnLs

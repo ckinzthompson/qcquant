@@ -12,6 +12,7 @@ __url__ = "https://github.com/ckinzthompson/qcquant"
 
 __author__ = "ckinzthompson"
 
-from .qcquant import run_app
 from . import qcquant_fitting as fitting
 from . import qcquant_calibrate as calibrate
+from . import qcquant_process as process
+from . import qcquant_app as app

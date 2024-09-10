@@ -24,6 +24,8 @@ INSTALL_REQUIRES = [
 	"matplotlib>=3.7.0",
 	"napari>=0.4.17",
 	"PyQt5",
+	"emcee",
+	"corner"
 ]
 EXTRAS_REQUIRE = {
 	"docs": [

@@ -4,6 +4,16 @@ Version: 0.5.1
 
 ![Chemotaxis Model](example_data/figures/math_model.png)
 
+
+# TODO LIST
+1. Update install instructions to pip install from github
+2. add corner and emcee to the setup.py
+3. maybe add `jupyterlab` to setup 
+4. upload calibration templated ipynb
+5. update readme instructions
+6. add a error to the calibration script for when there is no data present (usually the prefix is bad)
+
+
 ## Install
 
 #### Set up a Python virtual environment
