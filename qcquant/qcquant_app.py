@@ -6,7 +6,7 @@ from PyQt5.QtCore import QTimer
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvas,NavigationToolbar2QT
 from PyQt5.QtWidgets import QWidget,QVBoxLayout,QFileDialog,QSizePolicy,QDockWidget
-from .qcquant_process import load_tif_biorad, histrphi, guess_plate_com, plot_centered_plate_img, plot_polar
+from .qcquant_process import load_tif, erode_nans, histrphi, guess_plate_com, plot_centered_plate_img, plot_polar
 from . import __title__,__version__
 
 viewer = None       ## Napari viewer
@@ -43,7 +43,7 @@ def fxn_load(event=None):
 	global viewer
 	
 	prefs = get_prefs()
-	scattering = load_tif_biorad(prefs['scattering'])
+	scattering = load_tif(prefs['scattering'])
 	if 'scattering' in viewer.layers:
 		viewer.layers.remove('scattering')
 	viewer.add_image(scattering,name='scattering')
@@ -101,6 +101,7 @@ def fxn_distribution(event=None):
 	nr = prefs['nr']
 	nphi = prefs['nphi']
 	dist = histrphi(viewer.layers['scattering'].data, com, nr, nphi, rmin, rmax)
+	dist = erode_nans(dist)
 
 	dock_qcquant.dist = dist
 	dock_qcquant.r = np.linspace(prefs['rmin'],prefs['rmax'],nr)
@@ -159,7 +160,7 @@ def initialize_qcquant_dock():
 
 	w_data = widgets.FileEdit(mode='r',label='Data File',name='scattering')
 	
-	w_dish_diameter = widgets.FloatSpinBox(value=100.0,label='Dish O.D. (mm)',min=0,max=1000.,name='dishdiameter')
+	w_dish_diameter = widgets.FloatSpinBox(value=90.0,label='Dish O.D. (mm)',min=0,max=1000.,name='dishdiameter')
 	w_calibration = widgets.FloatSpinBox(value=92.2,label='Calibration (um/px)',min=0,name='calibration')
 	w_phi= widgets.SpinBox(value=128,label='Num. Bins: phi',min=1,name='nphi')
 	w_nr= widgets.SpinBox(value=128,label='Num. Bins: r',min=1,name='nr')
@@ -185,8 +186,8 @@ def initialize_qcquant_dock():
 	fig,ax = plt.subplots(2,figsize=(4,6))
 	canvas = FigureCanvas(fig)
 	toolbar = NavigationToolbar2QT(canvas)
-	# canvas.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)
-	canvas.setSizePolicy(QSizePolicy.Fixed,QSizePolicy.Fixed)
+	canvas.setSizePolicy(QSizePolicy.Expanding,QSizePolicy.Expanding)
+	# canvas.setSizePolicy(QSizePolicy.Fixed,QSizePolicy.Fixed)
 
 	# container = widgets.Container(widgets=[w_dish_diameter,w_calibration,w_nr,w_phi,w_rmin,w_rmax, widgets.Label(label=""), w_data, b_conversion,b_locate,b_distribution,b_live,b_save])
 	container = widgets.Container(widgets=[
@@ -211,7 +212,7 @@ def initialize_qcquant_dock():
 	vb.addWidget(container.native)
 	vb.addWidget(canvas)
 	vb.addWidget(toolbar)
-	vb.addStretch()
+	# vb.addStretch()
 	qw.setLayout(vb)
 
 	dock = viewer.window.add_dock_widget(qw,name=f'{__title__} {__version__}')

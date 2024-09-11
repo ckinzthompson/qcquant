@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.interpolate import RectBivariateSpline
 
 
-def load_tif_biorad(image_path,dust_filter=True):
+def load_tif(image_path,dust_filter=True):
 	### Coming from a biorad gel doc, images seem to be inverted (both epi and trans) (i.e., so that you get positive bands)
 	## this is borderline criminal.... so flip it back
 
@@ -14,13 +14,13 @@ def load_tif_biorad(image_path,dust_filter=True):
 	print('Loaded %s'%(image_path),z.dtype,z.shape)
 	smax = 0
 	with tifffile.TiffFile(image_path) as tif:
-		########
-		#### USEFUL FOR DEBUGGING FILES
-		for key in tif.pages[0].tags.keys():
-			 print(key,tif.pages[0].tags[key].value)
-		print(tif.pages[0].tags['PhotometricInterpretation'].value)
-		# print(tif.pages[0].tags['SMaxSampleValue'].value)
-		########
+		# ########
+		# #### USEFUL FOR DEBUGGING FILES
+		# for key in tif.pages[0].tags.keys():
+		# 	 print(key,tif.pages[0].tags[key].value)
+		# print(tif.pages[0].tags['PhotometricInterpretation'].value)
+		# # print(tif.pages[0].tags['SMaxSampleValue'].value)
+		# ########
 
 
 		if 51123 in tif.pages[0].tags: ## it's micromanager!
@@ -34,14 +34,17 @@ def load_tif_biorad(image_path,dust_filter=True):
 		print(str(tif.pages[0].tags['PhotometricInterpretation'].value))
 		print('%d-bit image; Maximum counts is %d'%(int(np.log2(smax+1)),smax))
 		if str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISBLACK' or tif.pages[0].tags['PhotometricInterpretation'].value == 1:
-			pass
 			print('Regular image')
 		elif str(tif.pages[0].tags['PhotometricInterpretation'].value) == 'PHOTOMETRIC.MINISWHITE' or tif.pages[0].tags['PhotometricInterpretation'].value == 0:
 			print('Inverted image')
 		else:
 			raise Exception('Cannot interpret photometric approach')
-	
-	intensity = (float(smax)-z.astype('float')) / float(smax)
+		
+
+	if z.ndim == 3:
+		intensity = (float(smax)-z.astype('float').mean(0)) / float(smax)
+	else:
+		intensity = (float(smax)-z.astype('float')) / float(smax)
 	
 	## don't play around
 	intensity[intensity > 1.] = 1.
@@ -71,8 +74,46 @@ def load_tif_biorad(image_path,dust_filter=True):
 	# intensity[intensity < 0 ] = 0. 
 	return intensity
 
+@nb.njit(cache=True)
+def erode_nans(d0):
+	d = np.copy(d0)
+	nx,ny = d.shape
 
-@nb.njit#(cache=True)
+	nanmask = np.isnan(d)
+	nmx,nmy = np.nonzero(nanmask)
+
+	total = nmx.size
+	while total > 0:
+		## erode NaNs
+		neighbors = np.zeros((3,3))
+		for nmi in range(nmx.size):
+			neighbors += np.nan
+			xi = nmx[nmi]
+			yi = nmy[nmi]
+			for ii in [-1,0,1]:
+				for jj in [-1,0,1]:
+					## include the center b/c it could have contributions from nearest-neighbors?
+					x = xi + ii
+					y = yi + jj
+
+					## wrap left/right b/c these are angular distributions
+					if y < 0:
+						y = ny-1
+					elif y >= ny:
+						y = 0
+					## don't wrap up down b/c these are distances
+					if x >= 0 and x < nx:
+						neighbors[ii+1,jj+1] = d[x,y]
+			d[xi,yi] = np.nanmean(neighbors)
+		
+		## check how many remain
+		total = 0
+		for nmi in range(nmx.size):
+			if np.isnan(d[nmx[nmi],nmy[nmi]]):
+				total += 1
+	return d
+
+@nb.njit(cache=True)
 def histrphi(d,com,nr,nphi,rmin,rmax):
 	dr = (rmax-rmin)/float(nr+1)
 	dphi = 2*np.pi/float(nphi+1)
