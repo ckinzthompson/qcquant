@@ -75,7 +75,7 @@ if __name__ == "__main__":
 		keywords=KEYWORDS,
 		long_description=read("README.md"),
 		long_description_content_type='text/markdown',
-		packages=setuptools.find_packages(where="."),
+		packages=setuptools.find_packages(include=['qcquant', 'qcquant.*']),
 		package_dir={"": "."},
 		package_data={
 			"": ["*.png","*.svg"],

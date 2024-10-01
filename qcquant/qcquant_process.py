@@ -115,8 +115,8 @@ def erode_nans(d0):
 
 @nb.njit(cache=True)
 def histrphi(d,com,nr,nphi,rmin,rmax):
-	dr = (rmax-rmin)/float(nr+1)
-	dphi = 2*np.pi/float(nphi+1)
+	dr = (rmax-rmin)/float(nr)
+	dphi = 2*np.pi/float(nphi)
 
 	hist_total = np.zeros((nr,nphi))
 	hist_n = np.zeros((nr,nphi))
@@ -128,10 +128,21 @@ def histrphi(d,com,nr,nphi,rmin,rmax):
 			y = float(j) - float((0.5+com[1])//1)
 			r = np.sqrt(x*x+y*y)
 
-			if r <= rmax and r>=rmin:
-				phi = np.arctan2(y,x)
+			if r < rmax and r>=rmin:
+				phi = np.arctan2(y,x) + np.pi
+				if phi >= 2*np.pi: ## protect against weird wraps...
+					phi = 0.
 				ind_r = int((r-rmin)//dr)
-				ind_phi = int((phi+np.pi)//dphi)
+				ind_phi = int(phi//dphi)
+
+				#### DEBUG....
+				if ind_r >= nr:
+					print(r,nr,dr)
+					raise Exception('OUT OF BOUNDS-r')
+				if ind_phi >= nphi:
+					print(phi,nphi,dphi)
+					raise Exception('OUT OF BOUNDS-phi')
+
 				hist_total[ind_r,ind_phi] += d[i,j]
 				hist_n[ind_r,ind_phi] += 1.
 
