@@ -42,9 +42,11 @@ def load_tif(image_path,dust_filter=True):
 		
 
 	if z.ndim == 3:
-		intensity = (float(smax)-z.astype('float').mean(0)) / float(smax)
-	else:
+		# intensity = (float(smax)-z.astype('float').mean(0)) / float(smax)
 		intensity = (float(smax)-z.astype('float')) / float(smax)
+	else:
+		# intensity = (float(smax)-z.astype('float')) / float(smax)
+		intensity = (float(smax)-z.astype('float')[None,:,:]) / float(smax)
 	
 	## don't play around
 	intensity[intensity > 1.] = 1.

@@ -67,10 +67,14 @@ def fxn_conversion(event=None):
 		return
 	ind = inds[-1]
 	ellipse = ss.data[ind]
-	
-	r1 = (ellipse[3,0]-ellipse[0,0])/2.
-	r2 = (ellipse[1,1]-ellipse[0,1])/2.
+
+	if ellipse.shape[1] == 3:
+		ellipse = ellipse[:,1:]
+
+	r1 = np.abs(ellipse[3,0]-ellipse[0,0])/2.
+	r2 = np.abs(ellipse[1,1]-ellipse[0,1])/2.
 	r = .5*(r1+r2)
+
 	factor = prefs['dishdiameter']/(2.*r)*1000  ## um/pix
 	dock_qcquant.container['calibration'].value = factor
 
@@ -79,7 +83,8 @@ def fxn_locate(event=None):
 	prefs = get_prefs()
 	
 	old_com = viewer.layers['com'].data[-1].astype('double')
-	new_com = guess_plate_com(viewer.layers['scattering'].data, old_com, prefs['dishdiameter'], prefs['calibration'])
+	time_index = viewer.dims.current_step[0]
+	new_com = guess_plate_com(viewer.layers['scattering'].data[time_index], old_com, prefs['dishdiameter'], prefs['calibration'])
 	viewer.layers['com'].data[-1] = new_com
 	viewer.layers['com'].refresh()
 
@@ -100,7 +105,8 @@ def fxn_distribution(event=None):
 	rmax = prefs['rmax'] / (prefs['calibration']/1000.)
 	nr = prefs['nr']
 	nphi = prefs['nphi']
-	dist = histrphi(viewer.layers['scattering'].data, com, nr, nphi, rmin, rmax)
+	time_index = viewer.dims.current_step[0]
+	dist = histrphi(viewer.layers['scattering'].data[time_index], com, nr, nphi, rmin, rmax)
 	dist = erode_nans(dist)
 
 	dock_qcquant.dist = dist
@@ -140,7 +146,8 @@ def fxn_save(event=None):
 	np.savetxt(os.path.join(opath,f'{fname}.r.txt'),dock_qcquant.r)
 	np.savetxt(os.path.join(opath,f'{fname}.phi.txt'),dock_qcquant.phi)
 	
-	fig,ax = plot_centered_plate_img(viewer.layers['scattering'].data, viewer.layers['com'].data[-1].astype('double'), prefs['dishdiameter'], prefs['calibration'])
+	time_index = viewer.dims.current_step[0]
+	fig,ax = plot_centered_plate_img(viewer.layers['scattering'].data[time_index], viewer.layers['com'].data[-1].astype('double'), prefs['dishdiameter'], prefs['calibration'])
 	fig.savefig(os.path.join(opath,f'{fname}.plate.png'))
 	plt.close(fig)
 	print('Saved:',os.path.join(opath,f'{fname}.plate.png'))
@@ -154,6 +161,60 @@ def fxn_invert(event=None):
 	global viewer
 	if 'scattering' in viewer.layers:
 		viewer.layers['scattering'].data = 1. - viewer.layers['scattering'].data
+
+def fxn_graball(event=None):
+	global viewer,dock_qcquant
+
+	from qtpy.QtWidgets import QMessageBox
+	msg = QMessageBox()
+	msg.setIcon(QMessageBox.Warning)
+	msg.setText("Do you really want to run this function?")
+	msg.setWindowTitle("Confirmation")
+	msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+	response = msg.exec_()  # Show the dialog and wait for user response
+	if response == QMessageBox.No:
+		return
+
+	prefs = get_prefs()
+	# fname = QFileDialog.getSaveFileName(parent=dock_qcquant, caption="Save Radial Analysis")[0]
+	# if not fname == "":
+	fpath = dock_qcquant.container[7].value
+	fdir = os.path.dirname(fpath)
+	fname = os.path.splitext(os.path.basename(fpath))[0]
+	opath = os.path.join(fdir,f'qcquant_results')
+	if not os.path.exists(opath):
+		os.mkdir(opath)
+
+	ls = [layer for layer in viewer.layers if layer.name == 'com']
+	if len(ls) == 0:
+		print('need to get a com layer')
+		dock_qcquant._timer.stop()
+		dock_qcquant._timer.disconnect()
+		return
+
+	com = viewer.layers['com'].data[-1].astype('double')
+
+	rmin = prefs['rmin'] / (prefs['calibration']/1000.)
+	rmax = prefs['rmax'] / (prefs['calibration']/1000.)
+	nr = prefs['nr']
+	nphi = prefs['nphi']
+	nt = viewer.layers['scattering'].data.shape[0]
+
+	from qtpy.QtWidgets import QApplication
+	dists = np.zeros((nt,nr,nphi))
+	for tt in range(nt):
+		viewer.dims.set_point(0,tt)
+		QApplication.processEvents() 
+		dists[tt] = histrphi(viewer.layers['scattering'].data[tt], com, nr, nphi, rmin, rmax)
+		dists[tt] = erode_nans(dists[tt])
+		
+
+	dock_qcquant.r = np.linspace(prefs['rmin'],prefs['rmax'],nr)
+	dock_qcquant.phi = np.linspace(np.rad2deg(-np.pi),np.rad2deg(np.pi),nphi)
+
+	np.save(os.path.join(opath,f'{fname}.dists.npy'),dists)
+	np.savetxt(os.path.join(opath,f'{fname}.r.txt'),dock_qcquant.r)
+	np.savetxt(os.path.join(opath,f'{fname}.phi.txt'),dock_qcquant.phi)
 
 def initialize_qcquant_dock():
 	global viewer
@@ -173,6 +234,7 @@ def initialize_qcquant_dock():
 	b_distribution = widgets.PushButton(text='Calc Polar Distribution')
 	b_save = widgets.PushButton(text='Save Distribution')
 	b_invert = widgets.PushButton(text='Invert Image')
+	b_graball = widgets.PushButton(text='Grab all')
 
 	b_conversion.clicked.connect(fxn_conversion)
 	b_locate.clicked.connect(fxn_locate)
@@ -180,6 +242,7 @@ def initialize_qcquant_dock():
 	b_distribution.clicked.connect(fxn_distribution)
 	b_save.clicked.connect(fxn_save)
 	b_invert.clicked.connect(fxn_invert)
+	b_graball.clicked.connect(fxn_graball)
 
 	w_data.changed.connect(lambda widget: fxn_load())
 
@@ -204,7 +267,8 @@ def initialize_qcquant_dock():
 		b_distribution,
 		b_live,
 		b_save,
-		b_invert
+		b_invert,
+		b_graball,
 	])
 
 	qw = QWidget()
